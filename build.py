@@ -472,7 +472,7 @@ a.chip{min-height:44px;display:inline-flex;align-items:center}
 .who a.nm{min-height:44px;display:inline-flex;align-items:center}
 .why a,.kv dd a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 /* A link inside running prose is still a tap target on a phone. */
-p a,.lede a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
+p a,.lede a,.note a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 .gloss{border:1px solid var(--line);border-radius:2px;margin:0 0 14px;background:var(--raised)}
 .gloss summary{cursor:pointer;padding:12px 16px;min-height:44px;display:flex;
   align-items:center;font:600 13px/1.4 system-ui,sans-serif}
@@ -1390,10 +1390,21 @@ def render_leg(d, L, base):
     chg = [m for m in mem if m["amendment"]]
     ct_html = ""
     if firm or chg:
-        def ct_li(m):
+        seats = {m["committee_id"]: m["role"] for m in firm}
+
+        def ct_li(m, mark=False):
             c = d["cttes"][m["committee_id"]]
+            # After folding the oficio-only committees into the real ones, a
+            # change can land on a committee already listed above. Saying which
+            # is the change beats printing the same name twice with no comment.
+            same = mark and m["committee_id"] in seats
+            note = (f' <span class="rank">— el oficio lo dejó como '
+                    f'{esc(m["role"])} en lugar de {esc(seats[m["committee_id"]])}'
+                    f'</span>' if same and seats[m["committee_id"]] != m["role"]
+                    else ' <span class="rank">— confirmado por oficio</span>'
+                    if same else "")
             return (f'<li><a href="{ctte_url(r, c)}">{esc(c["name"])}</a> '
-                    f'<span class="rank">{esc(m["role"])}</span></li>')
+                    f'<span class="rank">{esc(m["role"])}</span>{note}</li>')
         order = {"titular": 0, "suplente": 1}
         firm.sort(key=lambda m: (order.get(m["role"], 2),
                                  d["cttes"][m["committee_id"]]["name"]))
@@ -1409,7 +1420,7 @@ def render_leg(d, L, base):
                f'<p class="sm mut">Designaciones que su bancada modificó después '
                f'por oficio. No se suman a las de arriba: sustituyen a otra '
                f'persona en esa comisión.</p>'
-               f'<ul class="roll">{"".join(ct_li(m) for m in chg)}</ul>'
+               f'<ul class="roll">{"".join(ct_li(m, mark=True) for m in chg)}</ul>'
                if chg else "")
             + '<p class="sm mut">Fuente: Diario de los Debates del Senado. '
               'Ninguna cámara publica esta composición como dato.</p></section>')
@@ -3429,9 +3440,6 @@ def demo():
         assert name != canon["name"]
         sl = slugify(name)
         assert not list((OUT / "comision").glob(f"{sl}*.html")), f"page for {name}"
-    hit = [p for p in OUT.rglob("*.html")
-           for g in ghosts if f">{g}<" in p.read_text()]
-    assert not hit, f"phantom committee named on {hit[:2]}"
     nsen = con.execute("SELECT count(*) FROM committee WHERE per_par=2026").fetchone()[0]
     assert len(d2["cttes"]) == nsen + 24 - len(ghosts), "committee count off"
 
@@ -3474,10 +3482,12 @@ def demo():
     # progress.html and balance.html belong to progress.py; robots.txt covers them.
     pages = [p for p in OUT.rglob("*.html")
              if p.name not in ("progress.html", "balance.html")]
-    for p in pages:
+    for p in pages:   # one read per page: this walks 15k files
         t = p.read_text()
         assert '<meta name="robots" content="noindex,nofollow">' in t, f"{p}: indexable"
         assert "acerca.html" in t, f"{p}: no link to the legal page"
+        for g in ghosts:
+            assert f">{g}<" not in t, f"{p}: names the phantom committee {g}"
     assert (OUT / "robots.txt").read_text().strip().endswith("Disallow: /")
     ac = (OUT / "acerca.html").read_text()
     for must in ("no es el Congreso", "corrección", "Creative Commons",
