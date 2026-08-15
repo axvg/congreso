@@ -1,0 +1,14 @@
+# Generated output — rebuilt from the database in ~6s by `python3 build.py`
+site/
+
+# Working data — refetched from the source APIs by `python3 -m ingest.run`
+data/
+
+node_modules/
+__pycache__/
+*.pyc
+
+# pre-existing shadcn scaffolding, unrelated to this project
+package.json
+package-lock.json
+.mcp.json

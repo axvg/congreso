@@ -1,0 +1,137 @@
+{
+  "subtitle": "A public record of what the 60 senators and 130 deputies actually do. Built against the real endpoints behind the Congress's own viewers, measured against GovTrack.us. This board is generated from the working database, so the numbers below are the real ones.",
+  "pieces": [
+    {
+      "name": "Legislators",
+      "state": "ok",
+      "note": "All 130 deputies and 60 senators, with bench, district, photo and contact. Every one of the 190 is joined to the bills API by normalised name. Party and district come out of a taxonomy the REST API refuses to expose and leaks anyway through the WordPress class list."
+    },
+    {
+      "name": "Bills — list and dossiers",
+      "state": "ok",
+      "note": "Both periods ingesting. The expediente dossier — action timeline, commissions, attached documents — is unlocked: its path segments are AES-128-ECB encrypted with a key shipped in the Angular bundle."
+    },
+    {
+      "name": "Motions",
+      "state": "ok",
+      "note": "107 motions with 233 signatures. This is where the new Congress's daily activity actually shows up: it has filed more than twice as many motions as bills."
+    },
+    {
+      "name": "Roll-call votes",
+      "state": "ok",
+      "note": "Now reads the Diario de los Debates as the authority over the electronic board. The Senate vote of 12 August is stored twice over: 38–13–3 as the board recorded it, 40–13–4 as the chair restated it after the oral votes, with the three corrected members tagged to the transcript they came from. A vote taken by show of hands is recorded with no roster and an explanation, rather than omitted. 1,340 attendance records added."
+    },
+    {
+      "name": "Public site",
+      "state": "work",
+      "note": "15,310 pages generated from the database in six seconds, no server and no runtime. Bill pages carry a six-node bicameral progress track — presentado, comisión, pleno de origen, cámara revisora, autógrafa, ley — with dates on the stages already cleared and a numbered list of what is still missing. Vote pages carry the full nominal roster with search, bench and vote filters, sort state in the URL, and a CSV. Four blind critics are scoring it against GovTrack right now."
+    },
+    {
+      "name": "Enacted law, decrees, treaties",
+      "state": "wait",
+      "note": "Endpoints found and confirmed reachable, but empty: no law has been enacted under the bicameral Congress yet, and the decree visors are still seeded with test rows."
+    }
+  ],
+  "sources": [
+    {
+      "what": "Legislator roster",
+      "verified": true,
+      "rows": "130 diputados · 60 senadores",
+      "url": "GET {diputados|senado}.congreso.gob.pe/wp-json/wp/v2/{diputado|senador}?per_page=100&_embed"
+    },
+    {
+      "what": "Bill list (paged)",
+      "verified": true,
+      "rows": "14,864 in 2021-2026 · 44 in 2026-2031",
+      "url": "POST /spley-portal-service/proyecto-ley/lista-con-filtro {perParId,codTipoParl,pageSize,rowStart}"
+    },
+    {
+      "what": "Bill dossier + timeline",
+      "verified": true,
+      "rows": "commissions, actions, documents",
+      "url": "GET /spley-portal-service/expediente/{aes(perParId)}/{aes(num)}?codTipoParl=C|D|S"
+    },
+    {
+      "what": "Author roster + join key",
+      "verified": true,
+      "rows": "190/190 matched",
+      "url": "GET /spley-portal-service/periodo-parlamentario/2026/filtros?codTipoParl=D|S"
+    },
+    {
+      "what": "Motions",
+      "verified": true,
+      "rows": "93 diputados · 14 senado",
+      "url": "POST /smociones-portal-service/mocion/lista-con-filtros"
+    },
+    {
+      "what": "Roll-call vote PDFs",
+      "verified": true,
+      "rows": "4 published, text layer, no OCR",
+      "url": "GET /wp-json/wp/v2/media?per_page=100 on both chamber hosts"
+    },
+    {
+      "what": "Enacted law (ADLP)",
+      "verified": true,
+      "rows": "0 under the new Congress",
+      "url": "GET api.congreso.gob.pe/adlp-visor-service/ley/leyes?nroley1&nroley2"
+    },
+    {
+      "what": "Decrees and treaties",
+      "verified": true,
+      "rows": "test rows only",
+      "url": "POST api.congreso.gob.pe/decretos-{legislativos|supremos|urgencia}-visor-service/.../bandeja"
+    },
+    {
+      "what": "Diario de los Debates",
+      "verified": true,
+      "rows": "6 files, 4 session dates",
+      "url": "GET /wp-json/wp/v2/media?mime_type=application/pdf on the three pleno sites"
+    },
+    {
+      "what": "Legacy roll calls 2021-2026",
+      "verified": true,
+      "rows": "426 sessions, all scanned",
+      "url": "GET www2.congreso.gob.pe/Sicr/RelatAgenda/PlenoComiPerm20112016.nsf/Votacion?ReadViewEntries"
+    }
+  ],
+  "notes": [
+    "<b>The headline number went down, and that is the point.</b> Validated coverage is now <b>40%</b>, not the 100% this board showed a few hours ago. Nothing broke. The old figure divided the roll calls that produced rows by the roll calls the parser had created &mdash; the same loop wrote both, so it could only ever read 100%. The denominator is now every roll call known to have been held, including one taken by show of hands for which no nominal list exists, and validation now requires agreement with the Diario de los Debates rather than with a document that says of itself that it is incomplete.",
+    "<b>A vote we had marked validated was wrong, and the metric could not have caught it.</b> The Senate acta for 12 August is stamped <code>INFORMACIÓN PROVISIONAL &middot; SIN LOS VOTOS ORALES</code> in its own text layer. The transcript records the chair correcting it on the floor: <i>&laquo;Más: Vázquez, abstención. Figallo, a favor. Se consigna también el voto a favor de la presidencia. Cuarenta votos a favor, trece en contra y cuatro abstenciones.&raquo;</i> We had stored 38&ndash;13&ndash;3 and three legislators' positions wrong. Validating a provisional document against itself proves only that it is self-consistent.",
+    "<b>The coverage denominator was measuring the parser's opinion of itself.</b> It divided roll calls that produced rows by roll calls in the table &mdash; both written by the same loop, which only inserted on success. It read 100% by construction. The denominator is now every roll call known to have been <i>held</i>, including those taken by show of hands and those for which no nominal list was ever published. The figure will fall as that denominator fills in, which is the point of it.",
+    "<b>A second bug of mine, found by the critic: every legislator's email had been silently deleted.</b> The roster loader had a flag to skip fetching profile pages, and because the write is an INSERT OR REPLACE, running with it blanked the address of all 190 members already stored. The flag existed only to save a minute; it has been removed rather than fixed, and the contact details are being re-ingested.",
+    "<b>The measurable half is roll-call coverage, and it is reported strictly.</b> The headline figure is the share of published roll calls whose decoded rows reproduce the tally the document prints for itself &mdash; the only number that is evidence the rows are <i>right</i>. The looser figure, the share that yields rows at all, sits under it. A confidently wrong vote row is worse than a missing one, so the strict number leads.",
+    "<b>The vote is encoded by position, not by text.</b> In the nominal-vote layout the mark in the SI, NO and ABST columns is the same literal <code>P</code> in all three; only its horizontal coordinate distinguishes a yes from a no. A parser that reads the text and not the geometry gets a plausible, entirely wrong answer.",
+    "<b>The 2021&ndash;2026 backfill is an OCR problem, not a scraping one.</b> All 426 legacy session records are printed-then-rescanned images with zero text layer. They are retrievable today and parseable by nobody without OCR.",
+    "<b>Nothing has been enacted yet.</b> The enacted-law, decree and treaty services are live and reachable, and they are empty for this period &mdash; the newest law in the whole archive predates the handover. Those pieces are wired and waiting rather than built and idle."
+  ],
+  "verdicts": [
+    {
+      "page": "Vote page",
+      "score": "ours 25 &middot; GovTrack 23",
+      "won": true,
+      "state": "gana",
+      "gap": "Won on roster affordances (7 of 7 with sort and filter state in the URL, against 2 of 7 and a sort that will not reverse), on provenance, on modelling absence in six buckets rather than one, and on stating plainly what it does not know. Won the tie-break too: the whole answer sits in the first viewport. <b>Biggest gap:</b> the roster is rendered by JavaScript, so the raw HTML holds zero legislator links where GovTrack's holds 439."
+    },
+    {
+      "page": "Bill page",
+      "score": "ours 18 &middot; GovTrack 24",
+      "won": false,
+      "state": "pierde",
+      "gap": "The progress track beat theirs outright and the plain-language annotation was verified across all 38 status codes with none missing. It lost on everything downstream: <b>no bill page names the committee</b> even though 37% of bills sit at &laquo;en comisión&raquo; &mdash; the field was in the payload all along and was being discarded &mdash; no bill links to a roll call, and there is no bill text on the site at all. Strip the three roll-call criteria and it wins 18&ndash;17."
+    },
+    {
+      "page": "Legislator page",
+      "score": "ours 15 &middot; GovTrack 18",
+      "won": false,
+      "state": "pierde",
+      "gap": "Beat them on permalinks, provenance, mobile, period hygiene and baseline discipline &mdash; every headline figure carries a median and a maximum. Lost on substance: no committee membership, no way to contact anyone, and <b>one statistic that is simply false</b> &mdash; the deputy who chaired the 5 August session is published as having attended none of it, because a non-vote and a registered leave were both counted as absence."
+    },
+    {
+      "page": "Vote data",
+      "score": "rebuilt",
+      "won": true,
+      "state": "corregido",
+      "gap": "The correction is applied and asserted by name so it cannot regress: Figallo a favor, Vásquez abstención, the presidency a favor, tally 40&ndash;13&ndash;4. Every row now carries whether it came from the electronic board, the transcript, or a <i>constancia</i> entered by the chair. Two roll calls remain unvalidated for an honest reason &mdash; the Cámara de Diputados has published no Diario for 5 August, so its board figures cannot be checked against anything."
+    }
+  ]
+}
