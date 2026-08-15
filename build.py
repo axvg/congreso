@@ -328,19 +328,27 @@ def num(n):
 # benches around the arc in that same order, so the only bench colours that ever
 # touch are the adjacent pairs the validator measured.
 #
-# The six are NOT a lightness ladder, and an earlier version of this comment
-# claimed steps (0x48·0x54·…, 0x6A·0x73·…) that the palette has never had. What
-# is actually there, as relative luminance in slot order:
+# The six are NOT a lightness ladder in slot order, and an earlier version of
+# this comment recited a run of six luminance steps per mode that the palette
+# has never had. What is actually there, as relative luminance in slot order:
 #
-#     light  .161  .100  .243  .075  .285  .179
-#     dark   .231  .236  .282  .151  .275  .187
+#     light  .161  .100  .243  .075  .245  .179
+#     dark   .147  .236  .282  .151  .275  .187
 #
-# so a desaturating filter puts gp1 and gp2 at 1.01:1 of each other in dark and
-# the arc does not separate by brightness alone. It does not have to: every
-# bench boundary in the hemicycle is drawn as a dashed rule with the bench's
-# monogram beside it, every legend entry carries the logo and the name, and no
-# reading of these pictures asks the reader to tell two greys apart. The one
-# thing the colours do have to do is clear 3:1 against the surface they are
+# — two rows demo() reads back out of this comment and recomputes, so they
+# cannot go stale again. In greyscale the weakest pair that actually touches on
+# the arc is 1.29:1 in light and 1.16:1 in dark (gp2·gp3); dark used to be
+# 1.02:1, two benches that were literally the same grey, and gp1 was re-picked
+# to end that.
+#
+# It will not get much better than 1.16 and the reason is arithmetic, not
+# effort: the validator's dark band is OKLab L 0.48–0.67, so six hues have
+# 0.124–0.282 of relative luminance to share out, and five even steps inside
+# that range are ~1.13:1 each. A dark palette cannot be both a legible ladder
+# and six equally salient categories. So the arc does not ask anyone to tell
+# two greys apart: every bench boundary is a dashed rule with the bench's
+# monogram beside it, and every legend entry carries the logo and the name.
+# What the colours DO have to do is clear 3:1 against the surface they are
 # painted on — which is --ground, the page, not --raised, the card, and that is
 # what an earlier validation got wrong.
 #
@@ -348,9 +356,10 @@ def num(n):
 #        --mode light --surface "#F7F4EF"   -> every check PASS,
 #        worst adjacent CVD ΔE 11.6, normal-vision 18.7, contrast all >= 3:1
 #        (--gp5 was #DD6F86: 2.86:1 on --ground, a fail this catches now)
-#   validate_palette.js "#0B9672,#6384CE,#CB7E4D,#7B5EAA,#CF7486,#8E7600"
+#   validate_palette.js "#087A5C,#6384CE,#CB7E4D,#7B5EAA,#CF7486,#8E7600"
 #        --mode dark --surface "#14100E"    -> every check PASS,
-#        worst adjacent CVD ΔE 12.9, normal-vision 17.8, contrast all >= 3:1
+#        worst adjacent CVD ΔE 12.9, normal-vision 17.8, tritan 9.7 (3.8 with
+#        the old --gp1), contrast all >= 3:1
 #
 # The arc order was chosen by measuring all fifteen pairs in both modes and
 # taking the path that maximises the weakest neighbouring pair (11.2 -> 12.9).
@@ -456,7 +465,7 @@ CSS = """
   --ground:#14100E; --raised:#1E1917; --ink:#EDE7DF; --muted:#9E948A;
   --line:#332B27; --accent:#D4636A; --ok:#6FB3A4; --wait:#D9A046; --dead:#8C8279;
   --sen:#7FA3CC; --dip:#D4636A; --sunk:#191413; --shade:#FFFFFF0D;
-  --gp1:#0B9672; --gp2:#6384CE; --gp3:#CB7E4D;
+  --gp1:#087A5C; --gp2:#6384CE; --gp3:#CB7E4D;
   --gp4:#7B5EAA; --gp5:#CF7486; --gp6:#8E7600; --gp0:#9E948A;
   --si:#4FA97F; --no:#DE6F6B; --abst:#CE9B33; --aus:#8C8279;
   --lic:#7FA3CC; --pres:#A99BE8; --vio:#A99BE8;
@@ -466,7 +475,7 @@ CSS = """
   --ground:#14100E; --raised:#1E1917; --ink:#EDE7DF; --muted:#9E948A;
   --line:#332B27; --accent:#D4636A; --ok:#6FB3A4; --wait:#D9A046; --dead:#8C8279;
   --sen:#7FA3CC; --dip:#D4636A; --sunk:#191413; --shade:#FFFFFF0D;
-  --gp1:#0B9672; --gp2:#6384CE; --gp3:#CB7E4D;
+  --gp1:#087A5C; --gp2:#6384CE; --gp3:#CB7E4D;
   --gp4:#7B5EAA; --gp5:#CF7486; --gp6:#8E7600; --gp0:#9E948A;
   --si:#4FA97F; --no:#DE6F6B; --abst:#CE9B33; --aus:#8C8279;
   --lic:#7FA3CC; --pres:#A99BE8; --vio:#A99BE8;
@@ -488,9 +497,14 @@ h1,h2,h3{font-family:ui-serif,Georgia,"Times New Roman",serif;font-weight:600;
 h1{font-size:clamp(26px,4.2vw,40px);letter-spacing:-.018em;line-height:1.14}
 /* A 91-character all-caps official title set at 40px is four lines of shouting.
    Long headlines step down to the second level of the scale instead. */
-h1.long{font-size:clamp(21px,2.6vw,27px);line-height:1.26;letter-spacing:-.006em}
-h2{font-size:24px;margin:0 0 16px;padding-bottom:9px;border-bottom:1px solid var(--line);
-  letter-spacing:-.008em}
+h1.long{font-size:clamp(23px,2.6vw,27px);line-height:1.26;letter-spacing:-.006em}
+/* h2 has to stay under h1.long's FLOOR, not under h1's ceiling: 82% of these
+   pages have a long title, and a fixed 24px h2 was 3px bigger than its own page
+   title at every width below 810px — no first level of hierarchy at all on a
+   phone. h1.long floors at 21px, so h2 tops out below it there and only reaches
+   24px where h1.long is already 27. */
+h2{font-size:clamp(19px,1.9vw,24px);margin:0 0 16px;padding-bottom:9px;
+  border-bottom:1px solid var(--line);letter-spacing:-.008em}
 h3{font-size:17px;letter-spacing:-.004em}
 .h4{font:600 13px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.14em;
   text-transform:uppercase;color:var(--muted);margin:0 0 10px}
@@ -500,16 +514,27 @@ p{margin:0 0 12px;max-width:70ch}
   letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
 .mut{color:var(--muted)}
 .sm{font-size:13.5px}
+/* Eight links wrapped to three rows on a phone: 137px of sticky chrome, 17% of
+   the screen, on every page, above every headline. The links live in their own
+   sideways scroller now — one 45px row — and the theme toggle stays pinned
+   outside it, so nothing walks off-screen and the page still has no horizontal
+   overflow of its own. */
 nav.top{position:sticky;top:0;z-index:30;background:var(--raised);
-  border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;
-  gap:2px;padding:0 clamp(8px,3vw,20px)}
+  border-bottom:1px solid var(--line);display:flex;flex-wrap:nowrap;
+  align-items:center;gap:2px;padding:0 clamp(8px,3vw,20px)}
+nav.top .links{display:flex;flex:1;min-width:0;gap:2px;align-items:center;
+  overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none}
+nav.top .links::-webkit-scrollbar{display:none}
+nav.top .links>a{flex:none;white-space:nowrap}
+@media(min-width:900px){nav.top .links{flex-wrap:wrap;overflow-x:visible}}
 nav.top a,nav.top button{display:inline-flex;align-items:center;min-height:44px;
   padding:0 12px;border:0;background:none;color:inherit;font:600 13px/1 system-ui,sans-serif;
   cursor:pointer;border-bottom:2px solid transparent}
 nav.top a:hover,nav.top button:hover{color:var(--accent);border-bottom-color:var(--accent)}
 nav.top .brand{font-family:ui-serif,Georgia,serif;font-weight:600;font-size:15px;
   letter-spacing:-.01em;margin-right:8px}
-nav.top .sp{margin-left:auto}
+nav.top button{flex:none;margin-left:auto}
 .crumb{font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--muted);margin:18px 0 10px;
   word-break:break-word}
 .crumb a{border:0}
@@ -654,6 +679,7 @@ figcaption{color:var(--muted);font-size:13px;line-height:1.55;margin-top:10px;ma
   background:currentColor;flex:none}
 .bl .nm{overflow:hidden;text-overflow:ellipsis}
 .brow .bar{height:16px}
+.brow .barw{min-width:14px}   /* el largo de la barra es el tamaño de la bancada */
 .brow .bn{font-variant-numeric:tabular-nums;font-weight:600;font-size:13px;text-align:right}
 .brow .bs{font-size:12px;color:var(--muted)}
 td.who2{padding:4px 12px}
@@ -824,7 +850,6 @@ td.nw{white-space:nowrap}
 .bar{display:flex;height:14px;border-radius:2px;overflow:hidden;border:1px solid var(--line);
   background:var(--sunk)}
 .bar i{display:block;height:100%}
-.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:13px}
 .prov{border-top:1px solid var(--line);margin-top:44px;padding-top:16px;color:var(--muted);
   font-size:13px}
 .crumb a,.prov a{display:inline-block;padding:13px 0;line-height:18px}
@@ -888,6 +913,8 @@ code{overflow-wrap:anywhere}
 .feed li{padding:6px 0;border-bottom:1px solid var(--line)}
 .feed li:last-child{border-bottom:0}
 .feed .t{display:block;font-size:14.5px;padding:9px 0;min-height:44px}
+/* el padrón: la marca de bancada al lado del nombre, no solo texto gris */
+.feed li>.rowmark{float:left;margin:11px 10px 0 0}
 .feed .m{font:600 11px/1.6 ui-monospace,Menlo,monospace;color:var(--muted);letter-spacing:.06em}
 .note{border-left:3px solid var(--wait);padding:10px 0 10px 14px;color:var(--muted);
   font-size:13.5px;margin:14px 0}
@@ -909,9 +936,12 @@ code{overflow-wrap:anywhere}
 # term from the URL so a party or district chip elsewhere can link straight to
 # "the padrón, filtered to this".
 FILTER_JS = """<script>
-function flt(){var v=q.value.toLowerCase(),n=0;
+/* «rodriguez» tiene que encontrar a Rodríguez: nadie escribe las tildes en un
+   buscador, y sin esto la lista devolvía cero. */
+function nrm(s){return s.normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toLowerCase();}
+function flt(){var v=nrm(q.value),n=0;
 [].forEach.call(ls.children,function(li){
-var h=li.textContent.toLowerCase().indexOf(v)<0;li.style.display=h?"none":"";n+=h?0:1;});
+var h=nrm(li.textContent).indexOf(v)<0;li.style.display=h?"none":"";n+=h?0:1;});
 if(window.cnt)cnt.textContent=n+" de "+ls.children.length+" en esta página.";
 try{history.replaceState(null,"",v?"#q="+encodeURIComponent(q.value):"#");}catch(e){}}
 q.oninput=flt;
@@ -927,6 +957,27 @@ TOGGLE = ("<button onclick=\"var d=document.documentElement,"
           "aria-label=\"Cambiar tema claro u oscuro\">Tema</button>")
 
 
+def logo_footer(body, r):
+    """The credit for the marks this page actually paints.
+
+    CC BY-SA travels with the work, not with the credits page: 261 pages showed
+    a logo and 9 linked the attribution, and 78 of the 82 that showed the one
+    CC BY-SA logo named neither its author nor its licence. Scoped by what the
+    page shows and built from the same JSON as the credits table, so it cannot
+    drift from the files or claim a licence for a logo that is not on screen.
+    """
+    shown = [p for p in BENCH_ORDER if f"logos/{BENCH[p][2]}" in body]
+    if not shown:
+        return ""
+    sa = [p for p in shown
+          if "BY-SA" in LOGO_CREDITS.get(p, {}).get("licencia", "").upper()]
+    return ('<br>Logotipos de bancada, marcas de sus organizaciones, vía '
+            'Wikimedia Commons. '
+            + " ".join(f'El de {esc(p)}, {logo_credit_line(p)} a PNG de 320 px '
+                       f'de ancho: ésa es la única modificación.' for p in sa)
+            + f' <a href="{r}{LOGO_CREDIT}">Autoría y licencia de cada uno</a>.')
+
+
 def shell(title, body, depth=0, desc=""):
     """Every page. `noindex` is deliberate and site-wide: this deploys public
     before it is finished, and a half-checked copy of the Congress's record has
@@ -939,20 +990,20 @@ def shell(title, body, depth=0, desc=""):
 <meta name="robots" content="noindex,nofollow">
 <meta name="description" content="{esc(desc)}">
 <style>{CSS}</style>{THEME}
-<nav class="top"><a class="brand" href="{r}index.html">Hemiciclo</a>
+<nav class="top"><div class="links"><a class="brand" href="{r}index.html">Hemiciclo</a>
 <a href="{r}proyectos.html">Proyectos</a>
 <a href="{r}parlamentarios.html">Parlamentarios</a>
 <a href="{r}bancadas.html">Bancadas</a>
 <a href="{r}comisiones.html">Comisiones</a>
 <a href="{r}votaciones.html">Votaciones</a>
 <a href="{r}asistencia.html">Asistencia</a>
-<a href="{r}mociones.html">Mociones</a>
-<span class="sp"></span>{TOGGLE}</nav>
+<a href="{r}mociones.html">Mociones</a></div>{TOGGLE}</nav>
 <div class="wrap">{body}
 <footer class="prov"><a href="{r}acerca.html">Acerca de este sitio: quién lo
 hace, de dónde sale cada dato y cómo pedir una corrección</a> &middot;
 Registro independiente construido con datos publicados por el Congreso de la
-República del Perú. <b>Este sitio no es el Congreso.</b></footer></div></html>"""
+República del Perú. <b>Este sitio no es el Congreso.</b>{logo_footer(body, r)}
+</footer></div></html>"""
 
 
 def gp(party):
@@ -1086,12 +1137,14 @@ SHAPE = {
         f'L{x - r * 1.25:.1f} {y + r * .85:.1f}Z"'),
     "ring": lambda x, y, r: f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r * .72:.1f}"',
 }
-# vote state -> (shape, hollow, colour, label). Hollow marks read as "not a
-# vote": absent, excused, chairing.
+# vote state -> (shape, hollow). Hollow marks read as "not a vote": absent,
+# excused, chairing. Eight states, eight silhouettes — «sin voto registrado»
+# used to share the hollow ring with «ausente», and since both are drawn in the
+# same grey they were the same seat twice.
 POS_SHAPE = {
     "SI": ("circle", 0), "NO": ("diamond", 0), "ABST": ("triangle", 0),
     "BLANCO": ("square", 0), "AUSENTE": ("ring", 1), "LICENCIA": ("square", 1),
-    "PRESIDENCIA": ("triangle", 1), "OTRO": ("ring", 1),
+    "PRESIDENCIA": ("triangle", 1), "OTRO": ("diamond", 1),
 }
 
 
@@ -1225,19 +1278,47 @@ def hall_svg(mem, ch, r=""):
                      ident=f"hemi-{ch}", groups=hg)
 
 
+def swatch(col, shape=None, label=""):
+    """One legend swatch.
+
+    Drawn by `mark()`, the same function that draws the seat it decodes, so the
+    key cannot disagree with the picture. It is an SVG and not a styled <span>
+    for two measured reasons. The <span> version put each silhouette in a
+    `.key .sw-circle` rule and the generic `.key .sw` rule below it — identical
+    specificity, so the later one won — painted every one of them back into a
+    rounded square: the key separated the states by colour alone while the seat
+    plan separated them by shape. And a hollow triangle, which is what presiding
+    the session looks like on the arc, has no CSS shorthand at all.
+
+    `shape` is (shape, hollow) as in POS_SHAPE; "hatch" for the striped chip
+    that matches the striped segment of a bar; None for a plain colour chip,
+    which is only ever a bench, whose identity is the logo and the name beside
+    it and never the colour on its own.
+    """
+    if shape == "hatch":
+        return f'<span class="sw sw-hatch" style="color:{col}"></span>'
+    if not shape:
+        return f'<span class="sw" style="background:{col}"></span>'
+    sh, hollow = shape
+    return (f'<svg class="sw" viewBox="0 0 16 16" role="img" '
+            f'style="color:{col}">'
+            + mark(sh, 8, 8, 5, "currentColor", hollow, title=label) + "</svg>")
+
+
 def key_list(items, shapes=None):
     """The legend every chart on this site shares.
 
     The swatch wears the colour; the words never do. Coloured 13px text is the
     quiet way a chart fails contrast, and a legend whose label is only legible
-    to someone who can see the hue is not a legend.
+    to someone who can see the hue is not a legend — which is also why every
+    legend that decodes a seat plan or a state bar passes `shapes`.
     """
     out = []
     for i, (c, lab, v) in enumerate(items):
         if v == "":
             continue
-        sw = (f'<span class="sw sw-{shapes[i]}" style="color:{c}"></span>'
-              if shapes else f'<span class="sw" style="background:{c}"></span>')
+        sw = swatch(c, shapes[i] if shapes else None,
+                    re.sub("<[^>]+>", "", str(lab)))
         out.append(f"<li>{sw}<span>{lab}</span><b>{v}</b></li>")
     return f'<ul class="key">{"".join(out)}</ul>'
 
@@ -2217,10 +2298,13 @@ def leg_att_rate(d, L):
     return ok, ok + falta, lic, pre
 
 
-ATT_CELL = {"presente": ("P", "var(--si)", "Asistió"),
-            "falta": ("A", "var(--no)", "No asistió"),
-            "excusa": ("L", "var(--lic)", "Con licencia"),
-            "presidencia": ("M", "var(--pres)", "Presidió la sesión")}
+# letra · color · texto · silueta. The shape is the one the same state wears in
+# a seat plan, so the strip, its legend and the hemicycle agree.
+ATT_CELL = {"presente": ("P", "var(--si)", "Asistió", ("circle", 0)),
+            "falta": ("A", "var(--no)", "No asistió", ("ring", 1)),
+            "excusa": ("L", "var(--lic)", "Con licencia", ("square", 1)),
+            "presidencia": ("M", "var(--pres)", "Presidió la sesión",
+                            ("triangle", 1))}
 
 
 def att_strip(d, L, r="../"):
@@ -2247,7 +2331,8 @@ def att_strip(d, L, r="../"):
         cs = []
         for s, x in months[mk]:
             lab, kind, why = att_state(d, s, x)
-            ch, col, short = ATT_CELL.get(kind, ("?", "var(--muted)", lab))
+            ch, col, short, _sh = ATT_CELL.get(
+                kind, ("?", "var(--muted)", lab, ("ring", 1)))
             cs.append(
                 f'<a class="cell" style="color:{col}" '
                 f'href="{r}asistencia/{esc(s["slug"])}.html" '
@@ -2256,11 +2341,12 @@ def att_strip(d, L, r="../"):
         cells.append(f'<div class="mo"><span class="mol">{MES[int(m) - 1]} {y} '
                      f'<b>{len(months[mk])}</b></span>'
                      f'<div class="cells">{"".join(cs)}</div></div>')
-    seen = {att_state(d, s, x)[1] for s, x in xs}
+    seen = [k for k in ("presente", "falta", "excusa", "presidencia")
+            if k in {att_state(d, s, x)[1] for s, x in xs}]
     leg = key_list([(ATT_CELL[k][1], f"<b>{ATT_CELL[k][0]}</b> {ATT_CELL[k][2]}",
                      sum(1 for s, x in xs if att_state(d, s, x)[1] == k))
-                    for k in ("presente", "falta", "excusa", "presidencia")
-                    if k in seen])
+                    for k in seen],
+                   shapes=[ATT_CELL[k][3] for k in seen])
     return (f'<figure><div class="cal">{"".join(cells)}</div>{leg}'
             f'<figcaption>Una casilla por toma de asistencia, en el orden en que '
             f'se tomaron; solo aparecen los meses con sesión, con cuántas tuvo. '
@@ -2397,7 +2483,12 @@ def att_block(d, L, base, r="../"):
     peers = base["asist"].get(L["chamber"], [])
     cmp_txt = ""
     if usable and len(peers) >= 5:
-        cmp_txt = (f' · mediana de {esc(CHAMBER_SHORT[L["chamber"]])}: '
+        # Two different medians live on this site and both are 95-ish: this one
+        # is over PEOPLE (each colleague's own rate), the one on /asistencia is
+        # over TAKINGS (how full the room was each time). Neither number means
+        # anything without its population, so each says which it is.
+        cmp_txt = (f' · mediana de los {len(peers)} '
+                   f'{"diputados" if L["chamber"] == "D" else "senadores"}: '
                    f'{median(peers)}%')
     rows = []
     for s, x in sorted(xs, key=lambda p: (p[0]["held_on"], p[0]["sort"]),
@@ -2820,10 +2911,10 @@ def pos_col(p):
     return POS_COL.get(p, "var(--muted)")
 
 
-def shape_class(p):
-    """The legend swatch that matches the silhouette drawn in the seat plan."""
-    sh, hollow = POS_SHAPE.get(p, ("ring", 1))
-    return "ring" if sh == "ring" else ("hollow" if hollow else sh)
+def pos_shape(p):
+    """The silhouette this state is drawn with, in the seat plan and in every
+    legend that decodes one. One lookup, so the two cannot drift."""
+    return POS_SHAPE.get(p, ("ring", 1))
 
 # ------------------------------------------------------------------ asistencia
 
@@ -3111,7 +3202,7 @@ def render_vote(d, v):
             seats.append((pos_col(x["position"]),
                           f'{nm} — {p} — {pos(x["position"])[0]}',
                           leg_url(r, x["leg"]["slug"]) if x["leg"] else "",
-                          POS_SHAPE.get(x["position"], ("ring", 1))))
+                          pos_shape(x["position"])))
         seen_pos = sorted(counts, key=lambda k: pos(k)[2])
         # The centre number is the count of the seats actually drawn, never the
         # headline tally: on a disputed roll call those differ by up to six, and
@@ -3128,14 +3219,18 @@ def render_vote(d, v):
            sub=f"Cómo votó cada escaño de {CHAMBER[ch]}", ident="hemi-vote",
            groups=[tuple(g) for g in hgroups])}
 {key_list([(pos_col(k), esc(pos(k)[0]), counts.get(k, 0)) for k in seen_pos],
-          shapes=[shape_class(k) for k in seen_pos])}
+          shapes=[pos_shape(k) for k in seen_pos])}
 <figcaption>Un escaño por fila de la lista nominal, agrupado por bancada —las
 siglas y las líneas marcan dónde empieza cada una— y dibujado según el sentido
 de su voto: <b>a favor</b> es un círculo, <b>en contra</b> un rombo,
 <b>abstención</b> un triángulo, y las figuras huecas son quienes no votaron.
-La forma va además del color, para que el diagrama se lea también en blanco y
-negro. Cada escaño lleva el nombre de quien lo ocupa y enlaza a su ficha; la
-lista completa, ordenable, está más abajo. Cifras leídas de la lista nominal de
+La forma va además del color, así que en pantalla ancha el diagrama se lee
+también en blanco y negro, y cada escaño lleva el nombre de quien lo ocupa y
+enlaza a su ficha. En un teléfono no: ahí cada escaño mide unos 8 px, a ese
+tamaño no se distingue ninguna figura ni se puede tocar un escaño, y el
+diagrama queda como ilustración. Lo que se lee entonces es la lista ordenable
+de más abajo, con los mismos nombres, el mismo sentido de voto y los mismos
+enlaces a tamaño completo. Cifras leídas de la lista nominal de
 esta acta.{src_note} El orden dentro de la sala es el de este sitio: el Congreso
 no publica el plano de curules.</figcaption></figure>"""
 
@@ -3145,6 +3240,10 @@ no publica el plano de curules.</figcaption></figure>"""
     if parties:
         seen_pos = sorted(counts, key=lambda k: pos(k)[2])
         prows = []
+        # Six bars all drawn to the full width is not a bar chart: a bench of 41
+        # and a bench of 10 had the same visual mass. The bar's LENGTH is now
+        # the bench's size and its segments are the split inside it.
+        biggest = max(sum(c.values()) for c in parties.values()) or 1
         for p, c in sorted(parties.items(),
                            key=lambda kv: (bench_slot(kv[0]) or 99, kv[0])):
             tot = sum(c.values())
@@ -3154,8 +3253,10 @@ no publica el plano de curules.</figcaption></figure>"""
             prows.append(
                 f'<div class="brow"><a class="bl {gp(p)}" href="{bench_url(r, p)}">'
                 f'{bench_logo(p, r, 26)}<span class="nm">{esc(p)}</span></a>'
+                + f'<div class="barw" style="width:{100 * tot / biggest:.1f}%">'
                 + stack_bar([(pos_col(k), f"{pos(k)[0]} {c.get(k, 0)}", c.get(k, 0))
                              for k in seen_pos], tot)
+                + "</div>"
                 + f'<span class="bn">{tot}</span>'
                 + (f'<span class="bs">{broke} se apartó</span>' if broke == 1 else
                    f'<span class="bs">{broke} se apartaron</span>' if broke else
@@ -3163,10 +3264,13 @@ no publica el plano de curules.</figcaption></figure>"""
                 + "</div>")
         bchart = ('<figure><div class="benchrows">' + "".join(prows) + "</div>"
                   + key_list([(pos_col(k), esc(pos(k)[0]), counts.get(k, 0))
-                              for k in seen_pos])
-                  + '<figcaption>Una barra por bancada, al 100 % de sus '
-                    'integrantes en la lista. La cifra de la derecha es cuántos '
-                    'de ellos votaron distinto a la mayoría de su propio grupo.'
+                              for k in seen_pos],
+                             shapes=[pos_shape(k) for k in seen_pos])
+                  + '<figcaption>Una barra por bancada. Su <b>largo</b> es '
+                    'cuántos integrantes tiene en la lista de esta votación —la '
+                    'más numerosa ocupa el ancho completo— y sus tramos, en qué '
+                    'sentido votaron. La cifra de la derecha es cuántos de ellos '
+                    'votaron distinto a la mayoría de su propio grupo.'
                     '</figcaption></figure>')
     ptable = ""
     if parties:
@@ -3347,10 +3451,12 @@ S.v=P.get("v")||"";
 q.value=S.q;fgp.value=S.gp;fv.value=S.v;
 function esc(s){{return String(s).replace(/[&<>"]/g,function(c){{
  return {{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}}[c];}});}}
+function nrm(s){{return String(s).normalize("NFD")
+ .replace(/[\\u0300-\\u036f]/g,"").toLowerCase();}}
 function draw(){{
- var q1=S.q.toLowerCase();
+ var q1=nrm(S.q);
  var rs=D.filter(function(x){{
-  return (!q1||(x[0]+" "+x[3]+" "+x[2]).toLowerCase().indexOf(q1)>=0)
+  return (!q1||nrm(x[0]+" "+x[3]+" "+x[2]).indexOf(q1)>=0)
    &&(!S.gp||x[2]===S.gp)&&(!S.v||x[4]===S.v);}});
  rs.sort(function(a,b){{
   var k=S.c===4?5:S.c,r;
@@ -3437,25 +3543,28 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
            f'la Mesa no consta en el acta como dato estructurado, y no lo '
            f'inventamos.</p></section>')
 
+    # The summary bar. It was the one bar on the site written by hand, and it
+    # showed: four segments, no rule between them and not a single title, right
+    # above the hemicycle. «En contra» and «abstención» are 3.6 ΔE apart for a
+    # deuteranope, so with no rule they read as one segment of double the size.
+    # It goes through the same two helpers as every other bar and legend now.
     bar = ""
     if total:
-        segs = [("SI", yes, POS_COL["SI"]), ("NO", no, POS_COL["NO"]),
-                ("ABST", ab, POS_COL["ABST"]), ("BLANCO", blank, POS_COL["BLANCO"]),
-                ("LICENCIA", lic, POS_COL["LICENCIA"]),
-                ("AUSENTE", aus, POS_COL["AUSENTE"]),
-                ("PRESIDENCIA", chair, POS_COL["PRESIDENCIA"]),
-                ("OTRO", other - chair, POS_COL["OTRO"])]
-        extra = ([("Sin reconciliar", unrec, "repeating-linear-gradient(45deg,"
-                   "var(--dead) 0 4px,transparent 4px 8px)")] if unrec else [])
-        bar = ('<div class="bar">' + "".join(
-            f'<i style="width:{100 * n / total:.1f}%;background:{c}"></i>'
-            for _, n, c in segs + extra if n) + "</div><div class='legend'>" + "".join(
-            f'<span style="color:{c}"><span class="dotmark"></span>'
-            f'{esc(pos(k)[0])} {n} ({pc(n, total)})</span>'
-            for k, n, c in segs if n)
-            + (f'<span class="mut"><span class="dotmark"></span>Sin reconciliar '
-               f'{unrec} ({pc(unrec, total)})</span>' if unrec else "")
-            + "</div>")
+        segs = [(k, n) for k, n in
+                (("SI", yes), ("NO", no), ("ABST", ab), ("BLANCO", blank),
+                 ("LICENCIA", lic), ("AUSENTE", aus), ("PRESIDENCIA", chair),
+                 ("OTRO", other - chair)) if n]
+        parts = [(pos_col(k), pos(k)[0], n) for k, n in segs]
+        keys = [(pos_col(k), esc(pos(k)[0]), f"{n} · {pc(n, total)}")
+                for k, n in segs]
+        shapes = [pos_shape(k) for k, _n in segs]
+        if unrec:
+            parts.append(("repeating-linear-gradient(45deg,var(--dead) 0 4px,"
+                          "transparent 4px 8px)", "Sin reconciliar", unrec))
+            keys.append(("var(--dead)", "Sin reconciliar",
+                         f"{unrec} · {pc(unrec, total)}"))
+            shapes.append("hatch")
+        bar = stack_bar(parts, total, height=22) + key_list(keys, shapes)
 
     # Sources disagree often. Rather than picking one and hiding the rest, the
     # page prints all of them side by side and says which one it is using.
@@ -3561,9 +3670,9 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
 <h1{" class=\"long\"" if len(v["subject"] or "") > 62 else ""}>{esc(v["subject"] or "Votación sin asunto registrado")}</h1>
 <p class="lede">{fecha(v["held_on"])}. <b>{esc(outcome)}</b>{lede_tail} {flag}<br>
 <span class="sm mut">{lede_src}</span></p>
-{warn}
 {billlink}
 {result_block}
+{warn}
 {nxt}
 {"<section><h2>Por grupo parlamentario</h2>" + bchart + ptable + "</section>" if ptable else ""}
 {out_html}
@@ -3699,14 +3808,19 @@ def bills_csv(d, bs):
 # --------------------------------------------------------------- asistencia
 
 def att_bar(t):
-    segs = [("Presentes", t["presente"], "var(--si)"),
-            ("Presidiendo", t["presidencia"], "var(--pres)"),
-            ("Con licencia", t["excusa"], "var(--lic)"),
-            ("Ausentes", t["falta"], "var(--no)")]
+    # Same silhouettes as a roll call, for the same reason: presiding and a
+    # licencia are not absences, and the reader should be able to see that
+    # without seeing the colours.
+    segs = [("Presentes", t["presente"], "var(--si)", ("circle", 0)),
+            ("Presidiendo", t["presidencia"], "var(--pres)", ("triangle", 1)),
+            ("Con licencia", t["excusa"], "var(--lic)", ("square", 1)),
+            ("Ausentes", t["falta"], "var(--no)", ("ring", 1))]
     tot = t["total"] or 1
-    return (stack_bar([(c, lab, n) for lab, n, c in segs], tot, height=22)
+    shown = [s for s in segs if s[1]]
+    return (stack_bar([(c, lab, n) for lab, n, c, _sh in segs], tot, height=22)
             + key_list([(c, esc(lab), f"{n} · {round(100 * n / tot)}%")
-                        for lab, n, c in segs if n]))
+                        for lab, n, c, _sh in shown],
+                       shapes=[sh for _l, _n, _c, sh in shown]))
 
 
 def att_series(d):
@@ -3852,10 +3966,14 @@ def render_att_index(d, today):
         if not ss:
             continue
         rates = [s["tally"]["pct"] for s in ss if s["tally"]["pct"] is not None]
+        # The median OF THE TAKINGS, not of the members: half of these {n}
+        # takings had this share of the room or better. The ficha of each
+        # parlamentario carries the other one, over people, and says so.
         per_ch.append(
             f'<div class="tile"><dt>{esc(CHAMBER_SHORT[ch])}</dt>'
-            f'<dd>{len(ss)}<small>tomas de asistencia · mediana de asistencia '
-            f'{median(rates)}%</small></dd></div>')
+            f'<dd>{len(ss)}<small>tomas de asistencia · mediana de las '
+            f'{len(rates)} tomas: {median(rates)}% de quienes debían estar'
+            f'</small></dd></div>')
     total_rows = sum(s["tally"]["total"] for s in d["sesiones"])
     srcs = sorted({s["source_url"] for s in d["sesiones"] if s["source_url"]})
     body = f"""<span class="eyebrow">Asistencia al Pleno</span>
@@ -4068,10 +4186,13 @@ def logo_credit_line(party):
         return (f'por {esc(autor)}, <a href="{CC_BY_SA}">CC BY-SA 4.0</a>, '
                 f'rasterizado desde el SVG de '
                 f'<a href="{esc(c.get("pagina", ""))}">Wikimedia Commons</a>')
-    if autor:
+    if autor and norm(autor) != norm(party):
         return (f'de {esc(autor)}, dominio público, vía '
                 f'<a href="{esc(c.get("pagina", ""))}">Wikimedia Commons</a>')
-    return "vía Wikimedia Commons"
+    # Commons credits five of these to the party itself, and «Logotipo de Fuerza
+    # Popular de Fuerza Popular» is what naming the author then produces.
+    return (f'dominio público, vía '
+            f'<a href="{esc(c.get("pagina", ""))}">Wikimedia Commons</a>')
 
 
 def render_bancada(d, party, today):
@@ -4137,7 +4258,8 @@ def render_bancada(d, party, today):
             for v, c, top, _n in votes) + "</div>"
             + key_list([(pos_col(k), esc(pos(k)[0]),
                          sum(c.get(k, 0) for _v, c, _t, _n in votes))
-                        for k in seen]))
+                        for k in seen],
+                       shapes=[pos_shape(k) for k in seen]))
 
     # This bench inside its own chamber: the seats it holds, lit.
     maps = []
@@ -4167,7 +4289,7 @@ def render_bancada(d, party, today):
 <div class="bhead">{bench_logo(party, r, 76)}
 <div><span class="eyebrow">Grupo parlamentario</span>
 <h1>{esc(party)}</h1>
-<p class="sm mut" style="margin:6px 0 0">Logotipo de {esc(party)}
+<p class="sm mut" style="margin:6px 0 0">Logotipo de {esc(party)}:
 {logo_credit_line(party)} · <a href="{cr}">autoría y licencia de todos los
 logotipos</a>. Usado para identificar al grupo; el partido no respalda este
 sitio.</p></div></div>
@@ -4591,8 +4713,13 @@ aprobó los suyos, de modo que de sus comisiones solo existe el nombre.</div>
     n["listado"] += 1
 
     # ---- legislators index
+    # The search results. 330 of these rows were a name in grey monospace with
+    # no bench mark of any kind, on a site whose whole identity system is the
+    # bench mark; they carry the logo now, like every other list of people.
     rows = "".join(
-        f'<li><span class="m">{esc(CHAMBER_SHORT[L["chamber"]])} '
+        f'<li class="{gp(L["party"])}">'
+        + (bench_logo(L["party"], "", 22, "rowmark") if L["party"] else "")
+        + f'<span class="m">{esc(CHAMBER_SHORT[L["chamber"]])} '
         f'{L["per_par"]}-{L["per_par"] + 5}'
         f'{" · " + esc(L["district"]) if L["district"] else ""}'
         f'{" · " + esc(L["party"]) if L["party"] else ""}</span>'
@@ -4645,8 +4772,7 @@ curules.</figcaption></figure>"""
                         + people_grid(nogroup, "", per_bench=True) + "</section>")
     body = f"""<span class="eyebrow">Padrón</span>
 <h1>Busque a su parlamentario</h1>
-<p class="lede">{dips} diputados y {sens} senadores del periodo 2026-2031
-{f", más {past} integrantes del Congreso unicameral 2021-2026 cuyas firmas siguen en el registro" if past else ""}.
+<p class="lede">{dips} diputados y {sens} senadores del periodo 2026-2031{f", más {past} integrantes del Congreso unicameral 2021-2026 cuyas firmas siguen en el registro" if past else ""}.
 Cada ficha reúne lo que firmó, lo que votó, si asiste y cómo se compara con la
 mediana de su propia cámara.</p>
 <div class="stick">
@@ -4658,11 +4784,22 @@ mediana de su propia cámara.</p>
 <p class="sm mut" id="cnt">{len(d["legs"])} parlamentarios. Escriba arriba para
 filtrar esta lista, o baje a la bancada que le interese.</p>
 {FILTER_JS}
+<div id="browse">
 <section><h2>Las dos cámaras, escaño por escaño</h2>{chambers}</section>
 <section><h2>Los {dips + sens} en ejercicio, por bancada</h2>
 <p class="sm mut">Ordenados por bancada y, dentro de ella, alfabéticamente por
 apellido. La franja de color bajo cada retrato es la de su grupo, la misma en
-todo el sitio.</p>{"".join(sections)}</section>
+todo el sitio.</p>{"".join(sections)}</section></div>
+<script>
+/* Los 190 en ejercicio salían dos veces: una en la lista plana de búsqueda y
+   otra, con retrato, en su bancada — 40 000 px de página y a quien buscaba un
+   nombre le quedaban 13 000 px de lista alrededor de su único resultado. Con
+   JS, la lista plana es la vista de resultados y solo aparece al escribir; sin
+   JS quedan las dos, que es lo que ve un rastreador. */
+(function(){{var b=document.getElementById("browse"),f=document.getElementById("ls");
+function sync(){{var on=q.value.trim().length>0;f.hidden=!on;b.hidden=on;}}
+q.addEventListener("input",sync);sync();}})()
+</script>
 {prov([
     'Padrón, foto, bancada y circunscripción: portales de la '
     '<a href="https://diputados.congreso.gob.pe/">Cámara de Diputados ↗</a> y del '
@@ -5279,6 +5416,8 @@ def demo():
     assert (OUT / "asistencia.html").exists()
     idx = (OUT / "asistencia.html").read_text()
     assert idx.count("asistencia/") >= len(takings), "index misses a taking"
+    assert re.search(r"mediana de las \d+ tomas", idx), \
+        "el resumen por cámara no dice sobre qué población es su mediana"
 
     # A licencia is not an absence and neither is presiding: not in the label,
     # not in the denominator, not anywhere on the person's page.
@@ -5299,6 +5438,12 @@ def demo():
         assert lic == sum(v for k, v in raw.items() if k in ("LO", "LE", "LP", "L")), \
             f'{L["slug"]}: licencias mal contadas'
         assert f"{ok} de {den}" in blk, f'{L["slug"]}: rate not published'
+        # Two medians on this site read 95-ish and mean different things: this
+        # one is over people, the one on /asistencia is over takings. Neither
+        # may be published without saying which population it ran over.
+        if "mediana" in blk:
+            assert re.search(r"mediana de los \d+ (diputados|senadores)", blk), \
+                f'{L["slug"]}: una mediana sin decir sobre qué población'
         # every excused taking is rendered as such, never as an absence.
         # Counted inside the table only: the strip above it names the same state
         # once more in each cell's title, and double-counting it would make this
@@ -5445,12 +5590,27 @@ def demo():
     # progress.html and balance.html belong to progress.py; robots.txt covers them.
     pages = [p for p in OUT.rglob("*.html")
              if p.name not in ("progress.html", "balance.html")]
+    jp = f'logos/{BENCH["Juntos por el Perú"][2]}'
+    # the file name, not the directory: «psicologos/» is a word in a bill text
+    marks = [f"logos/{f}" for _s, _m, f in BENCH.values()]
+    withlogo = 0
     for p in pages:   # one read per page: this walks 15k files
         t = p.read_text()
         assert '<meta name="robots" content="noindex,nofollow">' in t, f"{p}: indexable"
         assert "acerca.html" in t, f"{p}: no link to the legal page"
         for g in ghosts:
             assert f">{g}<" not in t, f"{p}: names the phantom committee {g}"
+        # The licence travels with the work. Tested on every page that paints a
+        # logo, not on a sample of eight: the sample passed while 252 pages
+        # showed a mark with no credit at all, and 78 of them showed the one
+        # logo whose licence obliges us to name its author.
+        if any(m in t for m in marks):
+            withlogo += 1
+            assert LOGO_CREDIT in t, f"{p}: logotipo sin enlace a los créditos"
+        if jp in t:
+            for must in ("Txolo", "CC BY-SA 4.0", "modificación"):
+                assert must in t, f"{p}: obra CC BY-SA sin «{must}»"
+    assert withlogo >= 200, f"solo {withlogo} páginas con logotipo: ¿se dejaron de pintar?"
     assert (OUT / "robots.txt").read_text().strip().endswith("Disallow: /")
     ac = (OUT / "acerca.html").read_text()
     for must in ("no es el Congreso", "corrección", "Creative Commons",
@@ -5491,6 +5651,65 @@ def demo():
         assert na >= cnt - 3, f"{pg.name}: {na} enlaces para {cnt} escaños"
         assert "var(--si)" in t or "var(--no)" in t, f"{pg.name}: escaños sin color de voto"
 
+    # ---- la leyenda que descifra el diagrama. The key used to separate the
+    # states by colour alone: three of its four swatches lost their silhouette
+    # to a `.key .sw` rule of equal specificity declared after them, and «con
+    # licencia» and «presidió la sesión» were the same swatch twice (ΔE 10.3,
+    # 1.06:1 in greyscale). Asserted on the generated HTML, per legend.
+    def key_lists(t):
+        return re.findall(r'<ul class="key">(.*?)</ul>', t, re.S)
+
+    def silhouette(li):
+        """What the swatch will actually be drawn as: the mark's geometry with
+        the colour and the tooltip taken out."""
+        sw = li.split("</svg>")[0]
+        return re.sub(r"<title>.*?</title>", "",
+                      re.sub(r'style="[^"]*"', "", sw))
+
+    for pg, t in vpages.items():
+        for ul in key_lists(t):
+            sigs = []
+            for li in re.findall(r"<li>(.*?)</li>", ul, re.S):
+                if '<svg class="sw"' in li:
+                    sigs.append(silhouette(li))
+                else:   # a bench, named and logotyped; or the striped chip
+                    assert 'class="blogo' in li or "sw-hatch" in li, \
+                        f"{pg.name}: entrada de leyenda sin figura: {li[:90]}"
+            assert len(sigs) == len(set(sigs)), \
+                f"{pg.name}: dos entradas de una leyenda con la misma figura"
+        # the caption promises greyscale legibility: it has to say at what width
+        if 'id="hemi-vote"' in t:
+            assert "8 px" in t and "ilustración" in t, \
+                f"{pg.name}: el pie promete blanco y negro sin decir a qué ancho"
+        # ...and the CSS class of every swatch that still is a <span> exists
+        for cls in re.findall(r'<span class="sw ([^"]+)"', t):
+            for c in cls.split():
+                assert re.search(rf"\.{c}\b[^{{]*\{{", CSS), \
+                    f"{pg.name}: la clase .{c} no tiene regla en la hoja"
+
+    # The figure in the key is the figure in the arc, state by state.
+    for vid, in con.execute("SELECT DISTINCT vote_id FROM vote_row"):
+        pg, t = next((p, x) for p, x in vpages.items() if f"<code>{vid}</code>" in x)
+        flat = re.sub(r"<title>.*?</title>", "",
+                      re.sub(r'style="[^"]*"', "", t))
+        for k, in con.execute("SELECT DISTINCT position FROM vote_row "
+                              "WHERE vote_id=?", (vid,)):
+            assert silhouette(swatch("", pos_shape(k))) in flat, \
+                f"{pg.name}: «{pos(k)[0]}» no lleva en la leyenda la figura de su escaño"
+
+    # Every bar gets the treatment every other bar got: a rule on each internal
+    # boundary and a title on each segment. The summary bar above the hemicycle
+    # — the most prominent graphic on the page — was the one that had neither.
+    for pg, t in vpages.items():
+        for j, b in enumerate(re.findall(r'<div class="bar"[^>]*>(.*?)</div>',
+                                         t, re.S)):
+            segs = re.findall(r"<i [^>]*>", b)
+            assert all("title=" in s for s in segs), \
+                f"{pg.name}: barra {j}, {sum('title=' in s for s in segs)} de "\
+                f"{len(segs)} segmentos con título"
+            assert sum("border-right" in s for s in segs) == max(len(segs) - 1, 0), \
+                f"{pg.name}: barra {j} sin separador en cada frontera"
+
     # A member's own page draws their chamber with their seat marked, once.
     sen = con.execute("SELECT slug, chamber FROM legislator WHERE per_par>=2026 "
                       "LIMIT 1").fetchone()
@@ -5511,7 +5730,10 @@ def demo():
         assert f"<h1>{esc(p)}</h1>" in bt
         assert bt.count("../parlamentario/") >= nm, \
             f"{p}: {bt.count('../parlamentario/')} enlaces para {nm} integrantes"
-        # every page that shows the logo can reach its licence
+        # the three pages that lead with this bench actually show its logo. That
+        # every page showing one reaches the credit is checked over every page
+        # this build writes, further down: this used to be that claim's only
+        # evidence, and it was eight pages out of 261.
         for page in (bt, (OUT / "parlamentarios.html").read_text(),
                      (OUT / "bancadas.html").read_text()):
             assert f"logos/{f}" in page and "acerca.html#logos" in page, \
@@ -5525,6 +5747,52 @@ def demo():
     # the colour class is fixed by name, not by insertion order
     assert gp("Fuerza Popular") == "gp3" and gp("Juntos por el Perú") == "gp1"
     assert gp("Un grupo que no existe") == "gp0"
+
+    # ---- la paleta, medida contra la superficie sobre la que se pinta de
+    # verdad: --ground, la página, y no --raised, la tarjeta. Con --raised el
+    # hemiciclo pasaba con un 3.09:1 que sobre la página era 2.86:1.
+    def _lum(h):
+        v = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        v = [x / 12.92 if x <= .03928 else ((x + .055) / 1.055) ** 2.4 for x in v]
+        return .2126 * v[0] + .7152 * v[1] + .0722 * v[2]
+
+    def _cr(a, b):
+        l1, l2 = _lum(a), _lum(b)
+        return (max(l1, l2) + .05) / (min(l1, l2) + .05)
+
+    themes = [tok for tok in
+              (dict(re.findall(r"--([\w-]+): *(#[0-9A-Fa-f]{6})",
+                               blk.split("}")[0]))
+               for blk in CSS.split(":root")[1:]) if "ground" in tok]
+    assert len(themes) == 3, f"{len(themes)} bloques de color, se esperaban 3"
+    assert themes[1] == themes[2], "los dos bloques oscuros ya no coinciden"
+    for tok in themes:
+        for k in [f"gp{i}" for i in range(1, 7)] + ["off"]:
+            assert _cr(tok[k], tok["ground"]) >= 3, \
+                f'--{k} {tok[k]}: {_cr(tok[k], tok["ground"]):.2f}:1 sobre --ground'
+        # .pager .on: 13 px sobre el acento, en 275 páginas
+        assert _cr(tok["accent"], tok["ground"]) >= 4.5, \
+            f'--accent {tok["accent"]}: {_cr(tok["accent"], tok["ground"]):.2f}:1 '
+    assert "color:#fff" not in CSS, "texto blanco fijo: no se mide en los dos temas"
+    # el peor par que se toca en el arco, en grises, en cada tema
+    for tok, floor in zip(themes, (1.29, 1.16, 1.16)):
+        worst = min(_cr(tok[f"gp{i}"], tok[f"gp{i + 1}"]) for i in range(1, 6))
+        assert round(worst, 2) >= floor, \
+            f"peor par contiguo en grises {worst:.2f}:1, el comentario dice {floor}"
+    # y el comentario de la paleta no puede afirmar un escalón que la hoja no
+    # tiene: sus dos filas se leen del propio fuente y se recalculan.
+    src = pathlib.Path(__file__).read_text("utf-8")
+    claim = re.search(r"#\s+light\s+([.\d ]+)\n#\s+dark\s+([.\d ]+)\n", src)
+    assert claim, "la tabla de luminancias desapareció del comentario"
+    for row, tok in zip(claim.groups(), themes[:2]):
+        got = [round(_lum(tok[f"gp{i}"]), 3) for i in range(1, 7)]
+        assert [float(x) for x in row.split()] == got, \
+            f"el comentario dice {row.split()}; la hoja mide {got}"
+    assert not re.search(r"0x[0-9A-F]{2}(\s*[·.]\s*0x[0-9A-F]{2})+", src), \
+        "un comentario vuelve a recitar una escalera de escalones de luminancia"
+    # y la excepción que se cita para los escaños es la que existe
+    assert "2.5.8" in CSS and "Equivalent" in CSS, \
+        "la nota de pointer-events no cita la excepción real de la 2.5.8"
 
     # ---- la tira de asistencia: cada toma una casilla, con su letra, y jamás
     # una licencia ni una presidencia pintadas como falta.
