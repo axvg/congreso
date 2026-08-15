@@ -130,6 +130,23 @@ def slugify(s):
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", s)).strip("-")
 
 
+# An action can carry several files and the first is not always the bill: a
+# PRESENTADO whose first attachment is an "OFICIO ... (ADHESIÓN)" is somebody
+# signing on, not the text. Prefer anything that is not obviously an annex.
+NOT_THE_BILL = ("oficio", "adhesi", "derivacion", "derivación", "decreto",
+                "dictamen", "autografa", "autógrafa", "acumula")
+
+
+def pick_doc(archivos):
+    files = list(archivos or [])
+    if not files:
+        return None
+    plain = [f for f in files
+             if not any(w in (f.get("nombreArchivo") or "").lower()
+                        for w in NOT_THE_BILL)]
+    return (plain or files)[0]
+
+
 def save_expediente(con, per_par, chamber, ply_num, d):
     """Store one fetched dossier: summary, status, and the action timeline."""
     if d.get("status") != "success":
@@ -148,7 +165,7 @@ def save_expediente(con, per_par, chamber, ply_num, d):
                   {"bill_id": bid, "committee_id": c["comisionId"]})
     n = 0
     for s in d.get("seguimientos") or []:
-        doc = next((f for f in s.get("archivos") or []), None)
+        doc = pick_doc(s.get("archivos"))
         db.upsert(con, "bill_action", {
             "bill_id": bid,
             "acted_on": (s.get("fecha") or "")[:10],

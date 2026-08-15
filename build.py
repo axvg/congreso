@@ -499,6 +499,17 @@ code{overflow-wrap:anywhere}
 .note{border-left:3px solid var(--wait);padding:10px 0 10px 14px;color:var(--muted);
   font-size:13.5px;margin:14px 0}
 .grid.cards{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+/* bill text: the filed document, rendered as prose instead of dumped in a <pre> */
+.txt{max-width:72ch}
+.txt p{overflow-wrap:anywhere;margin:0 0 12px;max-width:none}
+.txt h3{margin:26px 0 8px;scroll-margin-top:60px;overflow-wrap:anywhere}
+.txt .scroll{max-height:none;margin:0 0 14px}
+.txt pre{margin:0;padding:12px 14px;white-space:pre;
+  font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+.toc{list-style:none;margin:0;padding:0}
+.toc li a{display:block;min-height:44px;line-height:1.35;padding:12px 0;
+  border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+@media(min-width:760px){.toc{columns:2;column-gap:30px}.toc li{break-inside:avoid}}
 """
 
 # Shared by every list page: filter the rows already in the DOM, and accept the
@@ -660,7 +671,7 @@ def ctte_aliases(con, cttes):
 
 
 def load(con):
-    d = {}
+    d = {"con": con}
     d["legs"] = [dict(r) for r in con.execute(
         "SELECT * FROM legislator ORDER BY chamber, last_name, first_name")]
     d["by_id"] = {l["id"]: l for l in d["legs"]}
@@ -672,6 +683,17 @@ def load(con):
     d["bills"] = [dict(r) for r in con.execute(
         "SELECT * FROM bill ORDER BY per_par DESC, presented_on DESC, ply_num DESC")]
     d["bill_by_id"] = {b["id"]: b for b in d["bills"]}
+    # Text of each bill, metadata only: the bodies are gigabytes together and are
+    # read one at a time in text_body(). The table fills in the background, so
+    # this is 0 rows on one run and every bill on another; nothing here assumes
+    # a size. `has_body` and `note` are different answers -- text we have, and a
+    # document the Congress filed as an image -- and a bill with no row at all is
+    # a third: not fetched yet.
+    d["texts"] = {r["bill_id"]: dict(r) for r in con.execute(
+        "SELECT bill_id, doc_id, pages, chars, note, source_url, fetched_at, "
+        "body IS NOT NULL AS has_body FROM bill_text")}
+    for b in d["bills"]:
+        b["text"] = d["texts"].get(b["id"])
     d["spon"] = {}
     for r in con.execute("SELECT * FROM bill_sponsor ORDER BY bill_id, rank"):
         d["spon"].setdefault(r["bill_id"], []).append(dict(r))
@@ -878,11 +900,245 @@ def load(con):
     return d
 
 
+# ------------------------------------------------------------- text of a bill
+
+# The filed document, as `pdftotext -layout` left it. Peruvian bills are
+# structured — articles, disposiciones, exposición de motivos, fórmula legal —
+# and that structure survives in the plain text as line prefixes. Detecting it is
+# the difference between a readable law and GovTrack's 594-page dump with no
+# table of contents and hashed anchors.
+ORD = ("[úu]nico|primero|segundo|tercero|cuarto|quinto|sexto|s[ée]ptimo|octavo|"
+       "noveno|d[ée]cim[oa]|und[ée]cimo|duod[ée]cimo")
+# A heading that owns its whole line.
+BIG = re.compile(
+    r"^\s*(?:[IVXLC]+\.\s*|\d{1,2}[.)]\s*)?("
+    r"exposici[óo]n de motivos.{0,60}"
+    r"|an[áa]lisis (?:costo|de costo|costo[- ]beneficio).{0,60}"
+    r"|f[óo]rmula legal.{0,60}"
+    r"|efecto de la (?:vigencia|norma).{0,60}"
+    r"|impacto (?:de la norma|econ[óo]mico|presupuestal).{0,60}"
+    r"|vinculaci[óo]n con.{0,60}"
+    r"|disposici[oó]n(?:es)? (?:complementari|transitori|final|derogatori|"
+    r"modificatori)\w*.{0,60}"
+    r"|(?:t[íi]tulo|cap[íi]tulo|secci[óo]n) [IVXLC]+\b.{0,70}"
+    r")\s*[:.]?\s*$", re.I)
+# A heading that opens a line and is followed by the text of the article itself.
+ART = re.compile(rf"^\s*(art[íi]culo\s+(?:\d{{1,3}}|{ORD}))\s*[°ºª]?\s*"
+                 r"(?:[.\-–—:)]+\s*|$)", re.I)
+# Two runs of spaces inside a line is what a column gap looks like after -layout.
+COL = re.compile(r"\S {3,}\S")
+
+
+def text_blocks(body):
+    """Plain text -> ('h', id, title) | ('p', text) | ('pre', text) blocks.
+
+    ponytail: blank lines are the only paragraph signal `pdftotext -layout`
+    leaves, and they are reliable here. If a filing ever comes through
+    single-spaced, this renders it as one long paragraph rather than wrongly.
+    """
+    out, seen = [], {}
+
+    def head(seed, title):
+        i = slugify(seed)[:48] or "s"
+        seen[i] = seen.get(i, 0) + 1
+        if seen[i] > 1:
+            i = f"{i}-{seen[i]}"
+        out.append(("h", i, " ".join(title.split())))
+
+    for blk in re.split(r"\n\s*\n", body or ""):
+        lines = [l.rstrip() for l in blk.split("\n") if l.strip()]
+        if not lines:
+            continue
+        first = lines[0].strip()
+        m = BIG.match(first)
+        if m:
+            head(m.group(1), first)
+            lines = lines[1:]
+        else:
+            m = ART.match(first)
+            if m:
+                rest = first[m.end():].strip()
+                # "Artículo 1. Objeto de la presente ley" reads better in a table
+                # of contents than "Artículo 1", so the first clause comes along.
+                lead = re.split(r"(?<=[.;:])\s", rest, maxsplit=1)[0][:80] if rest else ""
+                head(m.group(1), m.group(1) + (". " + lead if lead else ""))
+                lines = ([rest] if rest else []) + lines[1:]
+        if not lines:
+            continue
+        cols = sum(1 for l in lines if COL.search(l))
+        if len(lines) >= 3 and cols >= max(2, round(len(lines) * 0.6)):
+            out.append(("pre", "\n".join(lines)))   # a cuadro; keep it aligned
+        else:
+            out.append(("p", " ".join(" ".join(l.split()) for l in lines)))
+    return out
+
+
+def text_html(blocks, base=""):
+    """-> (table of contents items, body blocks). `base` prefixes the anchors
+    when the table of contents lives on a different page than the text."""
+    toc, out = [], []
+    for blk in blocks:
+        if blk[0] == "h":
+            toc.append(f'<li><a href="{base}#{blk[1]}">{esc(blk[2])}</a></li>')
+            out.append(f'<h3 id="{blk[1]}">{esc(blk[2])}</h3>')
+        elif blk[0] == "pre":
+            out.append(f'<div class="scroll"><pre>{esc(blk[1])}</pre></div>')
+        else:
+            out.append(f"<p>{esc(blk[1])}</p>")
+    return toc, out
+
+
+# Server-rendered text, filtered in place. Only `#q=` is read from the hash, so
+# an anchor like `#articulo-3` still scrolls instead of being taken as a query.
+TEXT_JS = """<script>
+(function(){var q=document.getElementById('q'),ls=document.getElementById('ls'),
+c=document.getElementById('cnt');if(!q||!ls)return;
+function f(){var v=q.value.toLowerCase(),n=0;
+[].forEach.call(ls.children,function(e){
+var h=v&&e.textContent.toLowerCase().indexOf(v)<0;e.style.display=h?'none':'';n+=h?0:1;});
+c.textContent=v?n+' de '+ls.children.length+' bloques contienen ese texto.':'';
+try{history.replaceState(null,'',v?'#q='+encodeURIComponent(q.value):'#texto');}catch(e){}}
+q.oninput=f;var m=/^#q=(.*)$/.exec(location.hash);
+if(m){q.value=decodeURIComponent(m[1]);f();}})()
+</script>"""
+
+# Past this many characters the text gets its own page: the bill page carries the
+# table of contents and the ficha, and stays readable on a phone.
+SPLIT = 60000
+
+TEXT_SRC = ("Texto extraído del PDF que el propio Congreso publica en el "
+            "expediente, con <code>pdftotext -layout</code>. No hay una versión "
+            "en HTML ni en datos: el original es el PDF enlazado arriba, y ante "
+            "cualquier diferencia manda el original.")
+
+ONE_VERSION = ("Es el texto <b>tal como fue presentado</b>. El Congreso no "
+               "publica versiones sucesivas del articulado como documentos "
+               "comparables: lo que viene después —dictamen, texto sustitutorio, "
+               "autógrafa— aparece como PDF suelto en el historial del "
+               "expediente. Por eso aquí hay una sola versión y no una "
+               "comparación entre versiones.")
+
+
+def text_corpus(d):
+    """(readable, filed as an image, not fetched yet) over the whole corpus.
+    Computed every build: the table fills in the background and any number
+    written down here would be wrong by the next run."""
+    read = img = 0
+    for b in d["bills"]:
+        t = b.get("text")
+        if not t:
+            continue
+        read += bool(t["has_body"])
+        img += not t["has_body"]
+    return read, img, len(d["bills"]) - read - img
+
+
+def text_body(d, bid):
+    """The body, read one row at a time: 14 878 of these do not fit in RAM."""
+    row = d["con"].execute("SELECT body FROM bill_text WHERE bill_id=?",
+                           (bid,)).fetchone()
+    return row["body"] if row else None
+
+
+def text_stats(t):
+    return (f'{num(t["pages"] or 0)} página{"s" if (t["pages"] or 0) != 1 else ""} '
+            f'· {num(t["chars"] or 0)} caracteres')
+
+
+def bill_text_html(d, b, r):
+    """-> (section for the bill page, full-text page or None).
+
+    Three states, and they are not the same thing: text we have, a document the
+    Congress filed as an image, and a bill whose PDF we simply have not fetched
+    yet. The third renders nothing at all — claiming a bill has no text when it
+    is our pipeline that is behind would be a lie about the Congress.
+    """
+    t = d["texts"].get(b["id"])
+    if not t:
+        return "", None
+    pdf = (f'<a href="{esc(t["source_url"])}">PDF oficial del expediente ↗</a>'
+           if t["source_url"] else "")
+    if not t["has_body"]:
+        # `note` is why. Say it in Spanish and quote it, rather than hiding the
+        # section or implying the document does not exist.
+        why = ("El documento pesa demasiado para tener texto: es un archivo de "
+               "imágenes." if "MB" in (t["note"] or "") else
+               "El Congreso publicó este proyecto como imagen escaneada, sin "
+               "texto seleccionable.")
+        return (f'<section id="texto"><h2>Texto del proyecto</h2>'
+                f'<p>{why} Algunos proyectos se presentan como fotografías del '
+                f'documento firmado, de modo que no hay nada que extraer: no '
+                f'podemos ofrecerlo aquí como HTML ni buscar dentro de él. '
+                f'{pdf}'
+                + (f' — {num(t["pages"])} página'
+                   f'{"s" if t["pages"] != 1 else ""} de imágenes'
+                   if t["pages"] else "")
+                + f'.</p><p class="sm mut">Razón registrada por nuestra ingesta: '
+                f'<code>{esc(t["note"])}</code>. El PDF oficial sigue publicado '
+                f'y es legible a la vista; lo que no tiene es capa de texto, de '
+                f'modo que no hay nada que extraer ni indexar.</p></section>'), None
+    body = text_body(d, b["id"])
+    if not body:
+        return "", None      # row says there is a body and there is not: say nothing
+    blocks = text_blocks(body)
+    split = len(body) > SPLIT
+    page = f'{b["ply_num"]}-texto.html'
+    toc, out = text_html(blocks, page if split else "")
+    toc_html = (f'<h3 style="margin-top:22px">Índice del articulado '
+                f'({len(toc)})</h3><ol class="toc">{"".join(toc)}</ol>'
+                if toc else
+                '<p class="sm mut">Este documento no trae artículos numerados '
+                'ni secciones con título, así que no hay índice que construir: '
+                'es texto corrido.</p>')
+    head = (f'<p>{text_stats(t)}. {pdf}. {ONE_VERSION}</p>')
+    search = ('<div class="filters" style="margin-top:18px">'
+              '<input id="q" type="search" placeholder="Buscar dentro del texto"'
+              ' aria-label="Buscar dentro del texto del proyecto">'
+              '</div><p class="sm mut" id="cnt"></p>')
+    if not split:
+        sec = (f'<section id="texto"><h2>Texto del proyecto</h2>{head}'
+               f'{toc_html}{search}<div class="txt" id="ls">{"".join(out)}</div>'
+               f'<p class="sm mut">{TEXT_SRC}</p></section>{TEXT_JS}')
+        return sec, None
+    sec = (f'<section id="texto"><h2>Texto del proyecto</h2>{head}'
+           f'<p><a href="{page}">Leer el texto completo en esta web</a>, con '
+           f'buscador dentro del documento. Es largo, así que va en su propia '
+           f'página; cada entrada del índice entra directo a su artículo.</p>'
+           f'{toc_html}<p class="sm mut">{TEXT_SRC}</p></section>')
+    ch = b["chamber"] or "C"
+    ttl = b["title"] or "Sin título registrado"
+    full = f"""<div class="crumb"><a href="{r}index.html">Inicio</a> ›
+<a href="{r}proyectos.html">Proyectos de ley</a> ›
+<a href="{b["ply_num"]}.html">{esc(b["code"])}</a> › Texto</div>
+<span class="eyebrow">Texto del proyecto {esc(b["code"])}</span>
+<h1>{esc(ttl if len(ttl) <= 150 else ttl[:150].rsplit(" ", 1)[0] + "…")}</h1>
+<p class="lede">{text_stats(t)}. {pdf + "." if pdf else ""}
+<a href="{b["ply_num"]}.html">Volver a la ficha del proyecto</a>, con su estado,
+su trámite, quién lo firmó y el historial completo del expediente.</p>
+<p class="sm mut">{ONE_VERSION}</p>
+{toc_html}
+{search}
+<div class="txt" id="ls">{"".join(out)}</div>
+{TEXT_JS}
+{prov([TEXT_SRC,
+       f'Documento: {esc(t["doc_id"])} del expediente de {esc(CHAMBER[ch])}.',
+       f'Descargado el {fecha(t["fetched_at"])}' if t["fetched_at"] else "",
+       f'Cita sugerida: «Proyecto de ley {esc(b["code"])}, texto como fue '
+       f'presentado, Congreso de la República del Perú, consultado el '
+       f'{fecha(dt.date.today().isoformat())}».'])}"""
+    return sec, shell(f'{b["code"]} · texto', full, depth=3,
+                      desc=f'Texto completo del proyecto de ley {b["code"]}, '
+                           f'por artículos y con buscador.')
+
+
 # ---------------------------------------------------------------- bill pages
 
 def bill_row(r, b, extra=""):
     stage = status_info(b["status"])[0]
     cls = {"LEY": "ok", "DEAD": "dead"}.get(stage, "wait")
+    t = b.get("text")
+    if t and t["has_body"]:
+        extra += " · texto en línea"
     return (f'<li><span class="m">{esc(b["code"])} · {fecha(b["presented_on"])}'
             f'{extra}</span>'
             f'<a class="t" href="{bill_url(r, b)}">{esc((b["title"] or "")[:190])}</a>'
@@ -1074,6 +1330,19 @@ def render_bill(d, b):
     # ponytail: the timeline already links every document at its own stage, so
     # a second flat list of the same 20 rows is noise. Only the count and the
     # honest note about there being no on-site text survive here.
+    text_sec, text_page = bill_text_html(d, b, r)
+    ficha_texto = ""
+    if text_sec:
+        tt = b["text"]
+        ficha_texto = (
+            '<div><dt>Texto</dt><dd>'
+            + (f'<a href="#texto">Leer el texto del proyecto</a>'
+               f'<small>{text_stats(tt)}, con buscador dentro del '
+               f'documento</small>'
+               if tt["has_body"] else
+               '<a href="#texto">Por qué no hay texto</a>'
+               '<small>el Congreso lo presentó como imagen</small>')
+            + "</dd></div>")
     docs = [a for a in acts if a["doc_url"]]
     docs_html = ""
     if docs:
@@ -1081,10 +1350,14 @@ def render_bill(d, b):
             f"<section><h2>Documentos del expediente ({len(docs)})</h2>"
             f"<p class='sm mut'>Cada documento está enlazado arriba, en la etapa "
             f"del trámite que lo produjo: así se ve de qué fase sale cada PDF. "
-            f"El Congreso no publica el texto de los proyectos en HTML, solo "
-            f"estos PDF en sus propios servidores, de modo que no podemos "
-            f"ofrecer el texto en esta página ni compararlo entre versiones.</p>"
-            f"</section>")
+            + ("El Congreso los publica solo como PDF en sus propios servidores; "
+               "el texto del proyecto tal como fue presentado está leído de ese "
+               "PDF y se puede <a href=\"#texto\">leer aquí, por artículos</a>."
+               if text_sec and b["text"]["has_body"] else
+               "El Congreso no publica el texto de los proyectos en HTML, solo "
+               "estos PDF en sus propios servidores, de modo que no podemos "
+               "ofrecer el texto en esta página ni compararlo entre versiones.")
+            + "</p></section>")
 
     e1, e2 = _enc(b["per_par"]), _enc(b["ply_num"])
     off = (f"{PORTAL}/{SEG[ch]}/expediente/{e1}/{e2}" if e1
@@ -1118,6 +1391,7 @@ def render_bill(d, b):
 {rate_block(d, b, stage)}
 {nexts_html}
 {summ}
+{text_sec}
 <section><h2>Ficha</h2><dl class="kv">
 <div><dt>Presentado</dt><dd>{fecha(b["presented_on"]) or "—"}</dd></div>
 <div><dt>Cámara de origen</dt><dd>{esc(CHAMBER[ch])}</dd></div>
@@ -1126,6 +1400,7 @@ def render_bill(d, b):
 <div><dt>Firmas</dt><dd>{len(sponsors)}<small>mediana de su periodo:
 {d["rates"]["firmas"].get(b["per_par"], 0)} firmas por proyecto</small></dd></div>
 <div><dt>Estado publicado</dt><dd>{esc(b["status"] or "—")}</dd></div>
+{ficha_texto}
 {f'<div><dt>{"Comisión dictaminadora" if len(cts) == 1 else "Comisiones"}</dt><dd>{ct_links}</dd></div>' if cts else ""}
 </dl>
 {f'<dl class="kv" style="margin-top:12px;grid-template-columns:1fr"><div><dt>Título oficial completo</dt><dd>{esc(full)}</dd></div></dl>' if head != full else ""}
@@ -1148,8 +1423,9 @@ def render_bill(d, b):
     f'República del Perú, consultado el {fecha(dt.date.today().isoformat())}».',
 ])}
 """
-    return shell(f'{b["code"]} · {(b["title"] or "")[:70]}', body, depth=3,
-                 desc=sentence[:180])
+    return (shell(f'{b["code"]} · {(b["title"] or "")[:70]}', body, depth=3,
+                  desc=sentence[:180]),
+            text_page)
 
 
 # ---------------------------------------------------------- legislator pages
@@ -2668,11 +2944,17 @@ def main():
     today = dt.date.today().isoformat()
     n = {"proyecto": 0, "parlamentario": 0, "votacion": 0, "listado": 0, "csv": 0}
 
-    # ---- bills
+    # ---- bills. A long text gets its own page next to the ficha; a short one
+    # stays inline, so most bills are one file, not two.
+    n["texto"] = 0
     for b in d["bills"]:
-        write(OUT / "proyecto" / str(b["per_par"]) / (b["chamber"] or "C")
-              / f'{b["ply_num"]}.html', render_bill(d, b))
+        page, txt = render_bill(d, b)
+        dr = OUT / "proyecto" / str(b["per_par"]) / (b["chamber"] or "C")
+        write(dr / f'{b["ply_num"]}.html', page)
         n["proyecto"] += 1
+        if txt:
+            write(dr / f'{b["ply_num"]}-texto.html', txt)
+            n["texto"] += 1
 
     # ---- legislators (peer baselines first: one pass, no N+1)
     base = {"bills": {}, "prim": {}, "mots": {}, "asis": {}, "asist": {}}
@@ -2759,10 +3041,34 @@ def main():
             f'<a href="proyectos/{k}.html">{esc(groups[k][1])} '
             f'<b>{num(len(groups[k][2]))}</b></a>' for k in ks) + "</div>"
 
+    # ---- how much of the corpus is actually readable here. Computed, never
+    # asserted: the extraction runs in the background and this changes daily.
+    tread, timg, tpend = text_corpus(d)
+    tot = len(d["bills"]) or 1
+    texto_block = f"""<section id="texto"><h2>Cuántos proyectos se pueden leer aquí</h2>
+<dl class="stat">
+<div><dt>Con texto en línea</dt><dd>{num(tread)}
+<small>{"menos del 1 %" if 0 < 100 * tread / tot < 0.5 else f"{100 * tread / tot:.0f} %"}
+del registro · leídos del PDF oficial, con
+índice de artículos y buscador dentro del documento</small></dd></div>
+<div><dt>Publicados como imagen</dt><dd>{num(timg)}
+<small>el Congreso los presentó escaneados o fotografiados: el PDF no tiene capa
+de texto y no hay nada que extraer</small></dd></div>
+<div><dt>Todavía sin descargar</dt><dd>{num(tpend)}
+<small>su PDF no ha pasado aún por nuestra ingesta; no significa que no tengan
+texto</small></dd></div>
+</dl>
+<p class="sm mut" style="margin-top:12px">El Congreso no publica el articulado en
+HTML ni como dato: cada proyecto es un PDF en su servidor. Lo que ve aquí sale de
+extraer el texto de ese PDF, y el original manda ante cualquier diferencia. Los
+proyectos con texto disponible aparecen marcados «texto en línea» en los
+listados.</p></section>"""
+
     hub = f"""<span class="eyebrow">Proyectos de ley</span>
 <h1>{num(len(d["bills"]))} proyectos de ley</h1>
 <p class="lede">Todo lo que se ha presentado en el Congreso desde 2021, con su estado
 oficial traducido a lenguaje llano y el trámite que le falta a cada uno.</p>
+{texto_block}
 <section><h2>Por cámara y periodo</h2>{facet_links("p2")}</section>
 <section><h2>Por etapa del trámite</h2>{facet_links("estado-")}</section>
 <section><h2>Por año de presentación</h2>
@@ -2976,7 +3282,8 @@ quiénes rompieron con su grupo y la lista completa descargable.</p>{extra}
     n["listado"] += 1
 
     con.close()
-    print(f"páginas de proyecto : {n['proyecto']}")
+    print(f"páginas de proyecto : {n['proyecto']} "
+          f"(+{n['texto']} de texto completo aparte)")
     print(f"páginas de parlamentario: {n['parlamentario']}")
     print(f"páginas de votación : {n['votacion']}")
     print(f"listados e índices  : {n['listado']} "
@@ -2998,6 +3305,7 @@ def render_acerca(d, today):
     """Who is speaking, where every number comes from, and how to argue with it.
     Counts are computed, not typed: a page that claims the site has N of
     something has to be right the day after the next ingest."""
+    tread, timg, tpend = text_corpus(d)
     prov_votes = sum(1 for v in d["votes"] if v["provisional"])
     prov_att = len({s["source_url"] for s in d["sesiones"]
                     if "PROVISIONAL" in (s["source_url"] or "").upper()})
@@ -3032,6 +3340,14 @@ que faltan los escribimos aquí, a partir del Reglamento del Congreso. Es la
 <a href="https://senado.congreso.gob.pe/">Senado</a>, vía su API REST. Del
 padrón 2021-2026 solo sobrevive el nombre en el filtro de autores de la base de
 proyectos: por eso esas fichas no tienen bancada ni foto.</dd></div>
+<div><dt>Texto de los proyectos</dt><dd>El PDF que el propio Congreso adjunta al
+expediente, convertido a texto con <code>pdftotext</code>. Hoy
+{"se puede leer" if tread == 1 else "se pueden leer"}
+aquí <b>{num(tread)}</b> de {num(len(d["bills"]))} proyectos;
+<b>{num(timg)}</b> fueron presentados como imagen escaneada y no tienen texto que
+extraer, y <b>{num(tpend)}</b> aún no han pasado por la descarga.
+<a href="proyectos.html#texto">El detalle está en el índice de proyectos</a>. El
+original manda: ante cualquier diferencia, vale el PDF.</dd></div>
 <div><dt>Mociones</dt><dd>Registro de mociones,
 <code>smociones-portal-service</code>.</dd></div>
 <div><dt>Votaciones nominales</dt><dd>Las actas en PDF que cada cámara publica
@@ -3477,6 +3793,72 @@ def demo():
     assert re.search(r"\d+%", blk), "no percentage on the base-rate block"
     assert "La mayoría de proyectos se quedan aquí" not in t, \
         "unbacked claim still published"
+
+    # ---- the text of the bill on the site. Three states, three renderings, and
+    # the table fills in the background: every check here is conditional on the
+    # DB having reached that state, and none of them hardcodes a count.
+    def billpath(row):
+        return (OUT / "proyecto" / str(row["per_par"]) / (row["chamber"] or "C")
+                / f'{row["ply_num"]}.html')
+
+    tb = con.execute("SELECT bill_id FROM bill_text WHERE body IS NOT NULL "
+                     "ORDER BY chars DESC LIMIT 1").fetchone()
+    if tb:
+        b2 = con.execute("SELECT * FROM bill WHERE id=?", (tb["bill_id"],)).fetchone()
+        p2 = billpath(b2)
+        t = p2.read_text()
+        meta = con.execute("SELECT pages, chars, source_url, body FROM bill_text "
+                           "WHERE bill_id=?", (b2["id"],)).fetchone()
+        assert 'id="texto"' in t, f'{b2["id"]}: bill with text has no text section'
+        assert '<a href="#texto">' in t, f'{b2["id"]}: no Texto link in the ficha'
+        assert num(meta["chars"]) in t and meta["source_url"] in t, \
+            f'{b2["id"]}: length or source PDF missing from the text section'
+        tp = p2.with_name(f'{b2["ply_num"]}-texto.html')
+        full = tp.read_text() if tp.exists() else t
+        # Server-rendered: the text is in the markup, the search only filters it.
+        assert 'id="ls"' in full and 'id="q"' in full, f'{b2["id"]}: no text search'
+        assert full.count("<p>") > 1, f'{b2["id"]}: text not rendered as paragraphs'
+        heads = [x for x in text_blocks(meta["body"]) if x[0] == "h"]
+        if heads:
+            toc = t.split('class="toc"')[1].split("</ol>")[0]
+            for a in re.findall(r'href="[^"#]*#([^"]+)"', toc):
+                assert f'id="{a}"' in full, f'{b2["id"]}: TOC anchor #{a} has no target'
+            assert f'id="{heads[0][1]}"' in full, "first heading not anchored"
+            assert len(re.findall(r'<li><a href="[^"]*#', toc)) == len(heads), \
+                f'{b2["id"]}: table of contents misses a heading'
+
+    nt = con.execute("SELECT bill_id, note FROM bill_text WHERE note IS NOT NULL "
+                     "LIMIT 1").fetchone()
+    if nt:
+        b2 = con.execute("SELECT * FROM bill WHERE id=?", (nt["bill_id"],)).fetchone()
+        t = billpath(b2).read_text()
+        blk = t.split('<section id="texto">')[1].split("</section>")[0]
+        assert esc(nt["note"]) in blk, "the reason there is no text is not quoted"
+        assert "imagen" in blk, "no plain-Spanish explanation of the missing text"
+        assert 'class="txt"' not in blk and 'id="q"' not in blk, \
+            "empty text container rendered for a bill with no text"
+        src = con.execute("SELECT source_url FROM bill_text WHERE bill_id=?",
+                          (nt["bill_id"],)).fetchone()["source_url"]
+        assert not src or src in blk, "the PDF is not linked when there is no text"
+
+    nor = con.execute("SELECT per_par, chamber, ply_num FROM bill WHERE id NOT IN "
+                      "(SELECT bill_id FROM bill_text) LIMIT 1").fetchone()
+    if nor:
+        assert 'id="texto"' not in billpath(nor).read_text(), \
+            "a bill whose PDF we have not fetched claims something about its text"
+
+    # The corpus counts are the DB's, not a number someone typed.
+    tread, timg, tpend = text_corpus(d2)
+    assert (tread, timg) == tuple(con.execute(
+        "SELECT count(body), count(note) FROM bill_text t "
+        "JOIN bill b ON b.id=t.bill_id").fetchone()), "text corpus counts drift"
+    assert tread + timg + tpend == len(d2["bills"])
+    blk = (OUT / "proyectos.html").read_text().split(
+        '<section id="texto">')[1].split("</section>")[0]
+    for k in (tread, timg, tpend):
+        assert num(k) in blk, f"{k} not stated on the bill index"
+    assert num(tread) in (OUT / "acerca.html").read_text(), \
+        "acerca.html does not say how much of the corpus is readable"
 
     # ---- noindex and the legal page, on every page this build writes.
     # progress.html and balance.html belong to progress.py; robots.txt covers them.

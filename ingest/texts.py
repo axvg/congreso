@@ -23,11 +23,20 @@ PDF_DIR = db.ROOT / "data" / "billpdf"
 
 
 def primary_doc(con, bill_id):
-    """The filed bill: earliest action carrying a document."""
+    """The filed bill.
+
+    PRESENTADO is the filing, so prefer it; then anything whose filename does not
+    look like an annex, because a filing can also carry an adhesion oficio; then
+    the earliest, which is what it was before and is right most of the time.
+    """
     return con.execute(
         "SELECT doc_id, doc_name, doc_url FROM bill_action "
-        "WHERE bill_id=? AND doc_id IS NOT NULL "
-        "ORDER BY acted_on ASC LIMIT 1", (bill_id,)).fetchone()
+        "WHERE bill_id=? AND doc_id IS NOT NULL ORDER BY "
+        "  (text = 'PRESENTADO') DESC, "
+        "  (lower(coalesce(doc_name,'')) LIKE '%oficio%' "
+        "   OR lower(coalesce(doc_name,'')) LIKE '%adhesi%' "
+        "   OR lower(coalesce(doc_name,'')) LIKE '%derivacion%') ASC, "
+        "  acted_on ASC LIMIT 1", (bill_id,)).fetchone()
 
 
 def pdf_path(doc_id):
