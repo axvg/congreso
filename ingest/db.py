@@ -89,8 +89,21 @@ CREATE TABLE IF NOT EXISTS bill_action (
   bill_id  TEXT NOT NULL,
   acted_on TEXT,
   text     TEXT,
+  doc_id   INTEGER,              -- proyectoArchivoId; the open PDF route keys on it
+  doc_name TEXT,
   doc_url  TEXT,
   PRIMARY KEY (bill_id, acted_on, text)
+);
+
+-- Text of the bill as filed, extracted from the PDF the Congress publishes.
+CREATE TABLE IF NOT EXISTS bill_text (
+  bill_id    TEXT PRIMARY KEY,
+  doc_id     INTEGER,
+  pages      INTEGER,
+  chars      INTEGER,
+  body       TEXT,
+  source_url TEXT,
+  fetched_at TEXT
 );
 
 -- Motions carry most of the new Congress's early activity.
@@ -180,7 +193,8 @@ CREATE INDEX IF NOT EXISTS attendance_leg ON attendance(legislator_id);
 LATE = [("vote", "n_yes_final INTEGER"), ("vote", "n_no_final INTEGER"),
         ("vote", "n_abstain_final INTEGER"), ("vote", "provisional INTEGER DEFAULT 0"),
         ("vote", "final_source_url TEXT"), ("vote_row", "source TEXT"),
-        ("committee_member", "amendment INTEGER DEFAULT 0")]
+        ("committee_member", "amendment INTEGER DEFAULT 0"),
+        ("bill_action", "doc_id INTEGER"), ("bill_action", "doc_name TEXT")]
 
 
 def connect(path=DB):

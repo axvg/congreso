@@ -1,0 +1,90 @@
+name: Actualizar y desplegar
+
+# El Congreso presenta proyectos a diario y publica las actas con uno o dos días
+# de retraso. Sin esto el sitio es una foto: se genera una vez y envejece.
+on:
+  schedule:
+    - cron: "0 11 * * *"      # 06:00 en Lima (UTC-5)
+  workflow_dispatch:           # y a mano cuando haga falta
+  push:
+    branches: [main]
+    paths: ["build.py", "progress.py", "ingest/**", ".github/workflows/**"]
+
+concurrency:
+  group: actualizar
+  cancel-in-progress: false    # nunca dos ingestas escribiendo la misma base
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # a nivel de job para poder preguntar por él en el `if` del despliegue
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar poppler
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
+      - name: Instalar dependencias
+        run: pip install --quiet cryptography
+
+      # La base es derivada: se puede reconstruir entera desde las APIs, pero eso
+      # son horas. Se cachea para que la corrida diaria solo traiga lo nuevo.
+      - name: Restaurar base
+        uses: actions/cache@v4
+        with:
+          path: data/congreso.db
+          key: congreso-db-${{ github.run_id }}
+          restore-keys: congreso-db-
+
+      - name: Ingerir
+        run: |
+          set -euo pipefail
+          python3 -m ingest.run members
+          python3 -m ingest.run bills
+          python3 -m ingest.run expedientes     # solo los que aún no tienen trámite
+          python3 -m ingest.run votes
+          python3 -m ingest.run textos          # solo los que aún no tienen texto
+          python3 -m ingest.run status
+
+      - name: Comisiones desde el Diario
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from ingest import db, committees
+          con = db.connect()
+          for pdf in sorted((db.ROOT / "data" / "pdf").glob("PLO-*.pdf")):
+              ch = "S" if "SENADO" in pdf.name.upper() else "D"
+              try:
+                  nc, nm, un = committees.ingest(con, ch, pdf)
+                  if nm:
+                      print(f"{pdf.name}: {nc} comisiones, {nm} asignaciones, {un} sin enlazar")
+              except Exception as e:
+                  print(f"{pdf.name}: {e!r}")
+          PY
+
+      - name: Autochequeos
+        run: |
+          set -euo pipefail
+          for m in spley legislators motions votes committees texts; do
+            echo "--- $m"; python3 -m ingest.$m
+          done
+
+      - name: Construir
+        run: |
+          python3 build.py
+          python3 progress.py
+
+      - name: Desplegar a Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: npx --yes wrangler@4 pages deploy site --project-name=hemiciclo --branch=main
+
+      - name: Resumen
+        run: python3 -m ingest.run status >> "$GITHUB_STEP_SUMMARY"

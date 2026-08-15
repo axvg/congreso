@@ -107,6 +107,17 @@ def ingest_list(con, per_par, per_leg=None, chamber=None, cap=100_000):
     return n
 
 
+def doc_url(archivo_id):
+    """Public PDF route for an attached document.
+
+    `/archivo/uuid/{uuid}` 400s with "Token de captcha no proporcionado"; the
+    numeric-id route the viewer uses for inline display is open. The id is
+    base64'd exactly as the bundle does it (btoa).
+    """
+    tok = base64.b64encode(str(archivo_id).encode()).decode()
+    return f"{api.SPLEY}/archivo/{tok}/pdf"
+
+
 def slugify(s):
     s = unicodedata.normalize("NFD", s or "")
     s = "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
@@ -136,7 +147,12 @@ def save_expediente(con, per_par, chamber, ply_num, d):
             "bill_id": bid,
             "acted_on": (s.get("fecha") or "")[:10],
             "text": s.get("desEstado"),
-            "doc_url": f"{api.SPLEY}/archivo/uuid/{doc['uuid']}" if doc else None,
+            # The uuid route is behind reCAPTCHA ("Token de captcha no
+            # proporcionado"). The numeric id route is the one the viewer itself
+            # uses to render inline, and is open -- so keep the id, not the uuid.
+            "doc_id": doc["proyectoArchivoId"] if doc else None,
+            "doc_name": doc.get("nombreArchivo") if doc else None,
+            "doc_url": doc_url(doc["proyectoArchivoId"]) if doc else None,
         })
         n += 1
     return n

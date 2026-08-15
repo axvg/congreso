@@ -1,4 +1,7 @@
-"""Ingest runner. `python3 -m ingest.run bills|expedientes|votes|status`"""
+"""Ingest runner.
+
+`python3 -m ingest.run bills|members|expedientes|votes|textos|status`
+"""
 import concurrent.futures as cf
 import sys
 
@@ -24,6 +27,53 @@ def votes(con, chamber=None):
     nv, nr, na = v.ingest(con, chamber)
     print(f"votes: {nv} roll calls, {nr} rows, {na} attendance records, "
           f"{v.link(con)} names joined to legislators", flush=True)
+
+
+def textos(con, limit=None, workers=4):
+    """Download and extract the filed text of every bill that has one."""
+    from . import texts
+    q = ("SELECT DISTINCT a.bill_id FROM bill_action a WHERE a.doc_id IS NOT NULL "
+         "AND NOT EXISTS (SELECT 1 FROM bill_text t WHERE t.bill_id=a.bill_id)")
+    if limit:
+        q += f" LIMIT {int(limit)}"
+    ids = [r[0] for r in con.execute(q).fetchall()]
+    print(f"textos: {len(ids)} por descargar", flush=True)
+
+    def grab(bid):
+        doc = texts.primary_doc(con, bid)
+        return bid, doc, texts.fetch_pdf(doc["doc_id"], doc["doc_url"])
+
+    ok = skip = fail = 0
+    # ponytail: 4 workers and no backoff beyond api.fetch's; it is a public
+    # service and a bulk read, so stay well under what a browsing user costs.
+    with cf.ThreadPoolExecutor(int(workers)) as pool:
+        for i, fut in enumerate(cf.as_completed(pool.submit(grab, b) for b in ids), 1):
+            try:
+                bid, doc, path = fut.result()
+                body, pages = texts.extract(path)
+                if len(body) < 200:
+                    skip += 1
+                    continue
+                db.upsert(con, "bill_text", {
+                    "bill_id": bid, "doc_id": doc["doc_id"], "pages": pages,
+                    "chars": len(body), "body": body, "source_url": doc["doc_url"],
+                    "fetched_at": _now()})
+                ok += 1
+            except Exception as e:  # noqa: BLE001
+                fail += 1
+                if fail < 6:
+                    print(f"  {e!r}", flush=True)
+            if i % 200 == 0:
+                con.commit()
+                print(f"  {i}/{len(ids)} ok={ok} sin-texto={skip} fail={fail}",
+                      flush=True)
+    con.commit()
+    print(f"textos: ok={ok} sin-texto={skip} fail={fail}", flush=True)
+
+
+def _now():
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 
 def expedientes(con, limit=None, workers=6, redo=0):
@@ -75,4 +125,4 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     con = db.connect()
     {"bills": bills, "members": members, "expedientes": expedientes,
-     "votes": votes, "status": status}[cmd](con, *sys.argv[2:])
+     "votes": votes, "textos": textos, "status": status}[cmd](con, *sys.argv[2:])
