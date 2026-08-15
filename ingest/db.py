@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS committee (
   url     TEXT
 );
 
+-- Published nowhere as data; parsed out of the roster-approval session diario.
+CREATE TABLE IF NOT EXISTS committee_member (
+  committee_id  INTEGER NOT NULL,
+  legislator_id TEXT,
+  name_raw      TEXT NOT NULL,
+  bench         TEXT,
+  role          TEXT,                -- titular | suplente
+  amendment     INTEGER DEFAULT 0,   -- 1 = a later change filed by oficio
+  source_url    TEXT,
+  PRIMARY KEY (committee_id, name_raw, role)
+);
+CREATE INDEX IF NOT EXISTS cm_leg ON committee_member(legislator_id);
+
 CREATE TABLE IF NOT EXISTS bill_committee (
   bill_id      TEXT NOT NULL,
   committee_id INTEGER NOT NULL,
@@ -166,7 +179,8 @@ CREATE INDEX IF NOT EXISTS attendance_leg ON attendance(legislator_id);
 # backfill them and the bill data behind them costs an hour to refetch.
 LATE = [("vote", "n_yes_final INTEGER"), ("vote", "n_no_final INTEGER"),
         ("vote", "n_abstain_final INTEGER"), ("vote", "provisional INTEGER DEFAULT 0"),
-        ("vote", "final_source_url TEXT"), ("vote_row", "source TEXT")]
+        ("vote", "final_source_url TEXT"), ("vote_row", "source TEXT"),
+        ("committee_member", "amendment INTEGER DEFAULT 0")]
 
 
 def connect(path=DB):
