@@ -34,17 +34,41 @@ def pdf_path(doc_id):
     return PDF_DIR / f"{doc_id}.pdf"
 
 
+# Some bills are filed as photographs taken on a phone -- one 2026 document is
+# an 89 MB iOS Quartz PDF with no text layer at all. Cap the download: past this
+# size it is certainly a scan, and there is nothing to extract anyway.
+MAX_BYTES = 30 * 1024 * 1024
+
+
+def size_of(url):
+    """Content-Length without pulling the body."""
+    try:
+        h = {}
+        api.fetch(url, headers={"Range": "bytes=0-0"}, out=h, tries=2, timeout=45)
+        rng = h.get("Content-Range", "")
+        return int(rng.rsplit("/", 1)[1]) if "/" in rng else None
+    except Exception:  # noqa: BLE001 - unknown size is not fatal, just download it
+        return None
+
+
 def fetch_pdf(doc_id, url):
     """Download once and keep it; the documents are immutable after filing."""
     p = pdf_path(doc_id)
     if p.exists() and p.stat().st_size > 0:
         return p
-    raw = api.fetch(url, timeout=120)
+    n = size_of(url)
+    if n and n > MAX_BYTES:
+        raise TooBig(f"{n // 1024 // 1024} MB")
+    raw = api.fetch(url, timeout=180)
     if not raw.startswith(b"%PDF"):
         raise ValueError(f"not a pdf: {raw[:80]!r}")
     PDF_DIR.mkdir(parents=True, exist_ok=True)
     p.write_bytes(raw)
     return p
+
+
+class TooBig(Exception):
+    """Too large to be anything but a scan."""
 
 
 def extract(path):
@@ -69,13 +93,15 @@ def ingest_one(con, bill_id, pause=0.0):
         return 0
     path = fetch_pdf(doc["doc_id"], doc["doc_url"])
     body, pages = extract(path)
-    if len(body) < 200:  # a scan, or a cover sheet with no text layer
-        return 0
+    note = None if len(body) >= 200 else "sin capa de texto: publicado como imagen"
     db.upsert(con, "bill_text", {
         "bill_id": bill_id, "doc_id": doc["doc_id"], "pages": pages,
-        "chars": len(body), "body": body, "source_url": doc["doc_url"],
+        "chars": len(body), "body": body if not note else None, "note": note,
+        "source_url": doc["doc_url"],
         "fetched_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     })
+    if note:
+        return 0
     if pause:
         time.sleep(pause)
     return len(body)

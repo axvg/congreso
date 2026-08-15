@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS bill_text (
   pages      INTEGER,
   chars      INTEGER,
   body       TEXT,
+  note       TEXT,               -- why there is no body, when there is none
   source_url TEXT,
   fetched_at TEXT
 );
@@ -194,7 +195,8 @@ LATE = [("vote", "n_yes_final INTEGER"), ("vote", "n_no_final INTEGER"),
         ("vote", "n_abstain_final INTEGER"), ("vote", "provisional INTEGER DEFAULT 0"),
         ("vote", "final_source_url TEXT"), ("vote_row", "source TEXT"),
         ("committee_member", "amendment INTEGER DEFAULT 0"),
-        ("bill_action", "doc_id INTEGER"), ("bill_action", "doc_name TEXT")]
+        ("bill_action", "doc_id INTEGER"), ("bill_action", "doc_name TEXT"),
+        ("bill_text", "note TEXT")]
 
 
 def connect(path=DB):

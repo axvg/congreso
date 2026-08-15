@@ -430,6 +430,7 @@ section{margin:34px 0}
 .kv dt{font:600 10px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
   text-transform:uppercase;color:var(--muted)}
 .kv dd{margin:2px 0 0}
+.kv dd small{display:block;color:var(--muted);font-size:12px;line-height:1.5}
 .who{display:flex;gap:14px;align-items:flex-start}
 .who img{width:64px;height:80px;object-fit:cover;border:1px solid var(--line);
   border-radius:2px;background:var(--sunk);flex:none}
@@ -477,6 +478,7 @@ a.chip{min-height:44px;display:inline-flex;align-items:center}
 .gloss dd{font-size:13.5px;color:var(--muted)}
 .prov b{color:var(--ink)}
 .prov code{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
+code{overflow-wrap:anywhere}
 .pager{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
 .pager a,.pager span{min-height:44px;min-width:44px;display:inline-flex;align-items:center;
   justify-content:center;padding:0 10px;border:1px solid var(--line);border-radius:2px;
@@ -1110,6 +1112,7 @@ def render_bill(d, b):
 <p class="lede"><span class="chip {cls}">{esc(b["status"] or "sin estado")}</span>
 &nbsp;{sentence_html}</p>
 <section><h2>Trámite legislativo</h2>{track_html}</section>
+{rate_block(d, b, stage)}
 {nexts_html}
 {summ}
 <section><h2>Ficha</h2><dl class="kv">
@@ -1117,7 +1120,8 @@ def render_bill(d, b):
 <div><dt>Cámara de origen</dt><dd>{esc(CHAMBER[ch])}</dd></div>
 <div><dt>Proponente</dt><dd>{esc(b["proponent"] or "—")}</dd></div>
 <div><dt>Periodo parlamentario</dt><dd>{b["per_par"]}-{b["per_par"] + 5}</dd></div>
-<div><dt>Firmas</dt><dd>{len(sponsors)}</dd></div>
+<div><dt>Firmas</dt><dd>{len(sponsors)}<small>mediana de su periodo:
+{d["rates"]["firmas"].get(b["per_par"], 0)} firmas por proyecto</small></dd></div>
 <div><dt>Estado publicado</dt><dd>{esc(b["status"] or "—")}</dd></div>
 {f'<div><dt>{"Comisión dictaminadora" if len(cts) == 1 else "Comisiones"}</dt><dd>{ct_links}</dd></div>' if cts else ""}
 </dl>
@@ -1147,6 +1151,72 @@ def render_bill(d, b):
 
 # ---------------------------------------------------------- legislator pages
 
+def leg_att_rate(d, L):
+    """(asistió, denominador, licencias, presidió) for one member. The
+    denominator is only the takings where showing up was the expectation: a
+    licencia and the chair are both out of it."""
+    xs = d["leg_att"].get(L["slug"], [])
+    ok = lic = pre = falta = 0
+    for s, x in xs:
+        kind = att_state(d, s, x)[1]
+        ok += kind == "presente"
+        falta += kind == "falta"
+        lic += kind == "excusa"
+        pre += kind == "presidencia"
+    return ok, ok + falta, lic, pre
+
+
+def att_block(d, L, base, r="../"):
+    """Where a member's record is thinnest and the reader's question hardest:
+    does this person turn up. One row per taking, every one linked to the
+    session it comes from."""
+    xs = d["leg_att"].get(L["slug"], [])
+    if not xs:
+        if L["per_par"] < 2026:
+            return ""       # no taking of that Congress is in our copy: omit
+        return ('<section><h2>Asistencia al Pleno</h2><p>No figura en ninguna '
+                'de las listas de asistencia que hemos leído. Las listas '
+                'nombran a los 130 diputados y 60 senadores en ejercicio, de '
+                'modo que esto significa que su nombre no cruzó con el padrón, '
+                'no que haya faltado.</p></section>')
+    ok, den, lic, pre = leg_att_rate(d, L)
+    rate, usable = pct_or_note(ok, den)
+    peers = base["asist"].get(L["chamber"], [])
+    cmp_txt = ""
+    if usable and len(peers) >= 5:
+        cmp_txt = (f' · mediana de {esc(CHAMBER_SHORT[L["chamber"]])}: '
+                   f'{median(peers)}%')
+    rows = []
+    for s, x in sorted(xs, key=lambda p: (p[0]["held_on"], p[0]["sort"]),
+                       reverse=True):
+        lab, kind, why = att_state(d, s, x)
+        tone = {"presente": "ok", "falta": "dead", "presidencia": "s"}.get(
+            kind, "wait")
+        rows.append(
+            f'<tr><td><a href="{r}asistencia/{esc(s["slug"])}.html">'
+            f'{fecha(s["held_on"])}</a></td>'
+            f'<td>{esc(s["taken_at"])}</td>'
+            f'<td><span class="chip {tone}">{esc(lab)}</span></td>'
+            f'<td class="sm mut">{esc(why)}</td></tr>')
+    faltas = den - ok
+    return f"""<section><h2>Asistencia al Pleno</h2>
+<dl class="stat">
+<div><dt>Asistió</dt><dd>{ok} de {den}<small>{esc(rate)}{cmp_txt}</small></dd></div>
+<div><dt>Inasistencias</dt><dd>{faltas}<small>tomas de asistencia en las que
+no registró presencia ni licencia</small></dd></div>
+<div><dt>Con licencia</dt><dd>{lic}<small>permiso de la Mesa Directiva: no es
+inasistencia y no entra en el denominador</small></dd></div>
+{f'<div><dt>Presidiendo</dt><dd>{pre}<small>dirigía la sesión: tampoco es inasistencia</small></dd></div>' if pre else ""}
+</dl>
+<div class="scroll" style="margin-top:18px"><table><thead><tr><th>Sesión</th>
+<th>Hora de la toma</th><th>Estado</th><th>Qué significa</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>
+<p class="sm mut">Cada sesión pasa lista más de una vez, así que la unidad es la
+toma de asistencia y no el día. {len(xs)} tomas registradas para
+{esc(CHAMBER[L["chamber"]])}; <a href="{r}asistencia.html">la lista completa,
+sesión por sesión</a>, con quién faltó en cada una.</p></section>"""
+
+
 def render_leg(d, L, base):
     r = "../"
     slug = L["slug"]
@@ -1170,6 +1240,20 @@ def render_leg(d, L, base):
                 'foto y contacto no sobrevivieron al cambio de periodo, y no '
                 'los inventamos. Lo que sí es completo es su rastro '
                 'legislativo, abajo.</div>')
+    # 22 people sat in both Congresses and had two pages that never referenced
+    # each other: their record read as two strangers with the same name.
+    twin = ""
+    for o in d["twin"].get(slug, []):
+        opar = f'{o["per_par"]}-{o["per_par"] + 5}'
+        twin += (
+            f'<div class="note">Es la misma persona que '
+            f'<a href="{leg_url(r, o["slug"])}">'
+            f'{esc(nice_name(o["full_name"]))}, {esc(CHAMBER[o["chamber"]])} '
+            f'{opar}</a>: volvió a ser elegida, de modo que su trayectoria '
+            f'está repartida en dos fichas, una por Congreso. Aquí verá lo que '
+            f'hizo en {esc(CHAMBER[L["chamber"]])} {per}; allí, lo del periodo '
+            f'{opar}. El cruce se hace por nombre normalizado, que es el único '
+            f'identificador común entre los dos padrones.</div>')
     all_bills = sorted(d["leg_bills"].get(slug, []),
                        key=lambda x: (d["bill_by_id"][x[0]]["presented_on"] or ""),
                        reverse=True)
@@ -1389,22 +1473,37 @@ def render_leg(d, L, base):
 <span class="chip {L["chamber"].lower()}">{esc(CHAMBER_SHORT[L["chamber"]])}</span>
 </div></div></div>
 {thin}
+{twin}
 <section><h2>Actividad, comparada con su cámara</h2>{stats}
 <p class="sm mut">Las medianas se calculan sobre los
 {len(base["bills"][L["chamber"]])} integrantes de la cámara, no sobre una
 muestra. El periodo {per} corre hasta el 26 de julio de {L["per_par"] + 5}; la
 próxima elección general es en abril de {L["per_par"] + 5}.</p></section>
+{att_block(d, L, base)}
 {ct_html}
 {contact_html}
 {bio}
 {bl}
 {ml}
 {vl}
+<section><h2>Descarga y cita</h2>
+<p><a href="{esc(slug)}.csv">Descargar el expediente de
+{esc(nice_name(L["full_name"]))} en CSV</a> — una fila por hecho registrado:
+proyectos firmados, mociones, votaciones nominales, comisiones y cada toma de
+asistencia, con su fecha, su papel y el enlace a la página de este sitio donde
+consta.</p>
+<p class="sm mut">Cita sugerida: «{esc(nice_name(L["full_name"]))},
+{esc(CHAMBER[L["chamber"]])} {per}», consultado el
+{fecha(dt.date.today().isoformat())}.</p></section>
 {prov([
     f'Ficha, foto, bancada y circunscripción: portal de la '
     f'{esc(CHAMBER[L["chamber"]])}'
     + (f' (<a href="{esc(L["source_url"])}">ficha oficial ↗</a>)' if L["source_url"] else "")
     + ', vía su API REST pública.',
+    (f'Asistencia: las listas que cada cámara publica en PDF al pie de la '
+     f'sesión, leídas una por una. Varias llevan el sello PROVISIONAL de la '
+     f'propia cámara; en <a href="{r}asistencia.html">la página de '
+     f'asistencia</a> está cada documento enlazado.') if d["leg_att"].get(slug) else "",
     f'Firmas de proyectos y mociones: <code>{API}</code>. El Congreso no publica '
     'un identificador compartido entre el padrón y la base de proyectos, así que '
     'el cruce se hace por nombre normalizado.',
@@ -1457,6 +1556,180 @@ def pos(p):
 
 
 POS_LABEL = {k: v[0] for k, v in POS.items()}
+
+# ------------------------------------------------------------------ asistencia
+
+# The plain attendance taking, which is a different record from a roll call: it
+# says who was in the room, not how they voted. Same discipline as POS — the
+# default for an unrecognised code is an excuse, never an absence.
+ATT = {
+    "PRE": ("Presente", "presente",
+            "Registró su asistencia en el control de la sesión."),
+    "AUS": ("Ausente", "falta",
+            "No registró asistencia en esa toma y no consta que tuviera "
+            "licencia: cuenta como inasistencia."),
+    "LO": ("Licencia oficial", "excusa",
+           "Licencia concedida por la Mesa Directiva para una comisión de "
+           "servicios o un viaje de representación. No es una inasistencia."),
+    "LE": ("Licencia por enfermedad", "excusa",
+           "Licencia por enfermedad acreditada ante la Mesa Directiva. No es "
+           "una inasistencia."),
+    "LP": ("Licencia personal", "excusa",
+           "Licencia personal concedida por la Mesa Directiva. Está "
+           "justificada y no es una inasistencia."),
+    "L": ("Licencia", "excusa",
+          "Licencia registrada sin que la lista precise el motivo. No es una "
+          "inasistencia."),
+}
+
+
+def att(st):
+    return ATT.get((st or "").upper(),
+                   (st or "Sin dato", "excusa",
+                    "Estado que la lista de asistencia publica y que todavía no "
+                    "hemos traducido. No lo contamos como inasistencia."))
+
+
+def att_state(d, s, x):
+    """(label, kind, why) for one member in one taking.
+
+    Two states are never inasistencia and both cost a real person their record
+    if we get them wrong: a licencia is a justified absence, and whoever is in
+    the chair is running the sitting, not skipping it.
+    """
+    st = (x["status"] or "").upper()
+    if x["leg"] and (s["chamber"], s["held_on"], x["leg"]["slug"]) in d["presided"] \
+            and st != "PRE":
+        return ("Presidió la sesión", "presidencia",
+                "Dirigía el debate en esa sesión: no es una inasistencia, "
+                "aunque la lista no le registre marca de presente.")
+    return att(st)
+
+
+def att_tally(d, s, rows):
+    c = {"presente": 0, "falta": 0, "excusa": 0, "presidencia": 0}
+    for x in rows:
+        c[att_state(d, s, x)[1]] += 1
+    c["total"] = len(rows)
+    c["base"] = c["presente"] + c["falta"]        # what a rate may divide by
+    c["asistieron"] = c["presente"] + c["presidencia"]
+    return c
+
+
+def hour24(t):
+    """'04:17 PM' -> '16:17', so takings of one day sort in the order they were
+    taken. Unparseable strings sort last rather than crashing the build."""
+    try:
+        return dt.datetime.strptime((t or "").strip().upper(),
+                                    "%I:%M %p").strftime("%H:%M")
+    except ValueError:
+        return t or "zz"
+
+
+def pct_or_note(n, base, unit="tomas de asistencia"):
+    """A percentage over a handful of events is noise dressed as a fact. Below
+    five the page says the count and why it is not giving a rate."""
+    if base >= 5:
+        return f"{round(100 * n / base)}%", True
+    return (f"son muy pocas {unit} para un porcentaje con sentido"), False
+
+
+# -------------------------------------------------------------- base rates
+
+def base_rates(d):
+    """What actually happens to a bill, measured instead of asserted.
+
+    The bill page claimed on 5 545 pages that «la mayoría de proyectos se quedan
+    aquí hasta que termina el periodo». The 2021-2026 Congress is over and its
+    14 864 expedientes are in the DB, so the claim is checkable — and it was
+    wrong. These are the real rates, computed once per build over the completed
+    period, which is the only one that can answer the question at all.
+    """
+    per = 2021
+    bills = [b for b in d["bills"] if b["per_par"] == per]
+    r = {"per": per, "n_bills": len(bills), "stage": {}, "dias": []}
+    for b in bills:
+        acts = d["acts"].get(b["id"], [])
+        seen = {status_info(a["text"])[0] for a in acts}
+        seen.add(status_info(b["status"])[0])
+        seen.add("PRES")
+        ley = "LEY" in seen
+        dic = any((a["text"] or "").strip().upper() == "DICTAMEN" for a in acts)
+        stuck = status_info(b["status"])[0]
+        for s in seen:
+            k = r["stage"].setdefault(s, {"n": 0, "ley": 0, "dictamen": 0,
+                                          "quedo": 0})
+            k["n"] += 1
+            k["ley"] += ley
+            k["dictamen"] += dic
+            # "Se quedó aquí" means the trámite ended at this stage. A bill
+            # whose last state is DICTAMEN is in stage COM but did leave the
+            # comisión's hands, so counting it as stuck there would inflate the
+            # very claim this block exists to check.
+            k["quedo"] += (stuck == s and not ley
+                           and not (s == "COM" and dic))
+        if dic and b["presented_on"]:
+            first = min((a["acted_on"] for a in acts
+                         if (a["text"] or "").strip().upper() == "DICTAMEN"
+                         and a["acted_on"]), default=None)
+            if first and first >= b["presented_on"]:
+                try:
+                    r["dias"].append(
+                        (dt.date.fromisoformat(first[:10])
+                         - dt.date.fromisoformat(b["presented_on"][:10])).days)
+                except ValueError:
+                    pass
+    r["mediana_dias"] = median(r["dias"])
+    # Firmas per bill, by periodo: the ficha prints a count with nothing to
+    # compare it against.
+    r["firmas"] = {}
+    for b in d["bills"]:
+        r["firmas"].setdefault(b["per_par"], []).append(len(d["spon"].get(b["id"], [])))
+    r["firmas"] = {k: median(v) for k, v in r["firmas"].items()}
+    return r
+
+
+def rate_block(d, b, stage):
+    """The numbers behind the sentence, for the stage this bill is actually in.
+    Says nothing at all when the completed period cannot answer honestly."""
+    r = d["rates"]
+    k = r["stage"].get(stage)
+    if not k or k["n"] < 100:
+        return ""
+    pc = lambda n: round(100 * n / k["n"])  # noqa: E731
+    per = f'{r["per"]}-{r["per"] + 5}'
+    if stage == "COM":
+        txt = (
+            f'De los <b>{num(k["n"])}</b> proyectos del Congreso {per} que '
+            f'llegaron a una comisión, <b>{num(k["dictamen"])}</b> ({pc(k["dictamen"])}%) '
+            f'recibieron dictamen y <b>{num(k["ley"])}</b> ({pc(k["ley"])}%) terminaron '
+            f'publicados como ley. <b>{num(k["quedo"])}</b> ({pc(k["quedo"])}%) '
+            f'se quedaron en comisión sin dictamen hasta que el periodo se '
+            f'cerró: para ellos la comisión fue el final del trámite.')
+        if r["dias"]:
+            edad = ""
+            if b["presented_on"]:
+                try:
+                    days = (dt.date.today()
+                            - dt.date.fromisoformat(b["presented_on"][:10])).days
+                    edad = (f' Este lleva <b>{num(days)}</b> días desde su '
+                            f'presentación.')
+                except ValueError:
+                    pass
+            txt += (f' Entre los que sí fueron dictaminados, la mediana fue de '
+                    f'<b>{num(r["mediana_dias"])}</b> días entre la presentación y '
+                    f'el dictamen, sobre {num(len(r["dias"]))} proyectos con ambas '
+                    f'fechas registradas.{edad}')
+    else:
+        txt = (f'De los <b>{num(k["n"])}</b> proyectos del Congreso {per} que '
+               f'alcanzaron esta etapa, <b>{num(k["ley"])}</b> ({pc(k["ley"])}%) '
+               f'llegaron a publicarse como ley y <b>{num(k["quedo"])}</b> '
+               f'({pc(k["quedo"])}%) se quedaron exactamente aquí.')
+    return (f'<section><h2>Qué suele pasar en esta etapa</h2><p>{txt}</p>'
+            f'<p class="sm mut">Tasas medidas sobre el periodo {per}, que ya '
+            f'terminó y por eso es el único que puede responder la pregunta. '
+            f'Son frecuencias históricas del conjunto, no un pronóstico sobre '
+            f'este expediente.</p></section>')
 
 # Not every row of a roll call comes from the same place. A vote read aloud and
 # recorded in the Diario de los Debates is a different kind of evidence from a
@@ -1979,6 +2252,247 @@ def vote_csv(d, v):
     return buf.getvalue()
 
 
+def leg_csv(d, L):
+    """One legislator's whole record, one row per fact. Same shape for a bill,
+    a motion, a vote, a committee seat and an attendance taking, because the
+    question people bring to it — «what did this person do» — does not care
+    which table it came from."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["legislator_id", "slug", "parlamentario", "camara", "periodo",
+                "grupo_parlamentario", "circunscripcion", "tipo", "fecha",
+                "codigo", "titulo", "rol", "estado", "pagina"])
+    def row(tipo, fecha_, codigo, titulo, rol, estado, page):
+        w.writerow([L["id"], L["slug"], L["full_name"], CHAMBER[L["chamber"]],
+                    f'{L["per_par"]}-{L["per_par"] + 5}', L["party"] or "",
+                    L["district"] or "", tipo, fecha_ or "", codigo or "",
+                    " ".join((titulo or "").split()), rol, estado or "", page])
+    for bid, rank in sorted(d["leg_bills"].get(L["slug"], []),
+                            key=lambda x: d["bill_by_id"][x[0]]["presented_on"] or "",
+                            reverse=True):
+        b = d["bill_by_id"][bid]
+        row("proyecto", b["presented_on"], b["code"], b["title"],
+            "autor principal" if (rank or 0) == 0 else "coautor", b["status"],
+            bill_url("", b))
+    by_mid = {m["id"]: m for m in d["motions"]}
+    for mid, rank in d["leg_motions"].get(L["slug"], []):
+        m = by_mid[mid]
+        row("mocion", m["presented_on"], m["code"], m["summary"],
+            "promotor" if (rank or 0) == 0 else "firmante", m["status"],
+            f'mociones.html#m-{mid}')
+    for v, p in d["leg_votes"].get(L["slug"], []):
+        row("votacion", v["held_on"], v["id"], v["subject"], pos(p)[0],
+            d["voutcome"][v["id"]], f'votacion/{v["slug"]}.html')
+    for m in d["leg_cttes"].get(L["slug"], []):
+        c = d["cttes"][m["committee_id"]]
+        row("comision", "", c["slug"], c["name"],
+            m["role"] + (" (cambio por oficio)" if m["amendment"] else ""),
+            "", ctte_url("", c))
+    for s, x in sorted(d["leg_att"].get(L["slug"], []),
+                       key=lambda p: (p[0]["held_on"], p[0]["sort"]), reverse=True):
+        lab, kind, _ = att_state(d, s, x)
+        row("asistencia", s["held_on"], s["taken_at"],
+            f'Toma de asistencia, {CHAMBER[s["chamber"]]}',
+            "cuenta en el denominador" if kind in ("presente", "falta")
+            else "excluida del denominador", lab,
+            f'asistencia/{s["slug"]}.html')
+    return buf.getvalue()
+
+
+def bills_csv(d, bs):
+    """The corpus behind a facet page, whole — not the 250 rows one page shows."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["bill_id", "codigo", "periodo", "camara", "numero", "titulo",
+                "estado", "etapa", "presentado", "proponente", "comisiones",
+                "firmas", "autor_principal", "pagina"])
+    for b in bs:
+        ss = d["spon"].get(b["id"], [])
+        prim = next((s for s in ss if (s["rank"] or 0) == 0), None)
+        w.writerow([
+            b["id"], b["code"], f'{b["per_par"]}-{b["per_par"] + 5}',
+            CHAMBER[b["chamber"] or "C"], b["ply_num"],
+            " ".join((b["title"] or "").split()), b["status"] or "",
+            status_info(b["status"])[0], b["presented_on"] or "",
+            b["proponent"] or "",
+            " | ".join(c["name"] for c in d["bill_cttes"].get(b["id"], [])),
+            len(ss), prim["name_raw"] if prim else "", bill_url("", b)])
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------- asistencia
+
+def att_bar(t):
+    segs = [("Presentes", t["presente"], "var(--ok)"),
+            ("Presidiendo", t["presidencia"], "var(--sen)"),
+            ("Con licencia", t["excusa"], "var(--gpc)"),
+            ("Ausentes", t["falta"], "var(--dead)")]
+    tot = t["total"] or 1
+    return ('<div class="bar">' + "".join(
+        f'<i style="width:{100 * n / tot:.1f}%;background:{c}"></i>'
+        for _, n, c in segs if n) + '</div><div class="legend">' + "".join(
+        f'<span style="color:{c}"><span class="dotmark"></span>{lab} {n} '
+        f'({round(100 * n / tot)}%)</span>' for lab, n, c in segs if n) + "</div>")
+
+
+def att_gloss(d, s):
+    seen = sorted({att_state(d, s, x)[0] for x in s["rows"]})
+    why = {}
+    for x in s["rows"]:
+        lab, _k, w = att_state(d, s, x)
+        why[lab] = w
+    return ('<details class="gloss" open><summary>Qué significa cada estado de '
+            'la lista</summary><dl class="kv">' + "".join(
+                f'<div><dt>{esc(lab)}</dt><dd>{esc(why[lab])}</dd></div>'
+                for lab in seen) + "</dl></details>")
+
+
+def render_att(d, s):
+    """One taking, in full. The absences are the point, so they are named and
+    linked rather than left to a percentage."""
+    r = "../"
+    ch = s["chamber"]
+    t = s["tally"]
+    prov_pdf = "PROVISIONAL" in (s["source_url"] or "").upper()
+    rows, faltaron = [], []
+    for x in sorted(s["rows"], key=lambda x: ((x["party_raw"] or ""), x["name_raw"])):
+        lab, kind, _why = att_state(d, s, x)
+        tone = {"presente": "ok", "falta": "dead", "presidencia": "s"}.get(kind, "wait")
+        L = x["leg"]
+        who = (f'<a href="{leg_url(r, L["slug"])}">{esc(nice_name(L["full_name"]))}</a>'
+               if L else esc(nice_name(x["name_raw"])))
+        rows.append(f'<tr><td><span class="chip {tone}">{esc(lab)}</span></td>'
+                    f'<td>{who}</td><td>{esc(x["party_raw"] or "—")}</td></tr>')
+        if kind == "falta":
+            faltaron.append(who)
+    pctxt, usable = pct_or_note(t["asistieron"], t["total"], "asistentes")
+    return shell(
+        f'Asistencia · {CHAMBER_SHORT[ch]} {fecha(s["held_on"])} {s["taken_at"]}',
+        f"""<div class="crumb"><a href="{r}index.html">Inicio</a> ›
+<a href="{r}asistencia.html">Asistencia</a> › {esc(CHAMBER[ch])}</div>
+<span class="eyebrow">{esc(CHAMBER[ch])} · toma de asistencia</span>
+<h1>Asistencia del {fecha(s["held_on"])}, {esc(s["taken_at"])}</h1>
+<p class="lede">De los {t["total"]} integrantes {esc(DE[ch])},
+<b>{t["asistieron"]}</b> figuran presentes ({esc(pctxt) if usable else "—"}),
+<b>{t["falta"]}</b> ausentes y <b>{t["excusa"]}</b> con licencia. Una licencia no
+es una inasistencia y quien preside tampoco falta: los contamos aparte.</p>
+{'<div class="note">La cámara publica este documento con el sello PROVISIONAL. Los nombres y los estados son los que imprime esa versión; si publica una definitiva que los corrija, esta página cambiará con ella.</div>' if prov_pdf else ""}
+<section><h2>Resultado de la toma</h2>{att_bar(t)}
+<dl class="stat" style="margin-top:18px">
+<div><dt>Presentes</dt><dd>{t["presente"]}</dd></div>
+<div><dt>Ausentes</dt><dd>{t["falta"]}</dd></div>
+<div><dt>Con licencia</dt><dd>{t["excusa"]}<small>justificadas por la Mesa
+Directiva</small></dd></div>
+<div><dt>Quórum legal</dt><dd>{LEGAL.get(ch, 130) // 2 + 1}<small>mitad más uno
+de los {LEGAL.get(ch, 130)} escaños {esc(DE[ch])}</small></dd></div>
+</dl></section>
+{f'<section><h2>Faltaron ({len(faltaron)})</h2><ul class="roll">' + "".join(f"<li>{w}</li>" for w in faltaron) + '</ul><p class="sm mut">Sin licencia registrada en esta toma. Una inasistencia a una toma no es una inasistencia a la sesión: la lista se pasa varias veces y una persona puede entrar después.</p></section>' if faltaron else '<section><h2>Faltaron</h2><p>Nadie sin licencia: en esta toma la lista registró a todos los que no estaban de licencia.</p></section>'}
+<section><h2>Lista completa ({t["total"]})</h2>
+{att_gloss(d, s)}
+<div class="filters"><input id="q" type="search"
+ placeholder="Busca a tu parlamentario o su bancada" aria-label="Filtrar la lista"></div>
+<div class="scroll"><table><thead><tr><th>Estado</th><th>Parlamentario</th>
+<th>Grupo parlamentario</th></tr></thead><tbody id="ls">{"".join(rows)}</tbody>
+</table></div><p class="sm mut" id="cnt">{t["total"]} nombres, en el orden de la
+lista oficial.</p>
+{FILTER_JS}</section>
+{prov([
+    f'Lista de asistencia publicada por {esc(CHAMBER[ch])}: '
+    f'<a href="{esc(s["source_url"])}">documento original ↗</a>.',
+    'El Congreso no publica la asistencia como dato: cada toma se lee del PDF '
+    'de la sesión, incluida la hora, que es lo que distingue una toma de otra.',
+    'Documento marcado PROVISIONAL por la propia cámara.' if prov_pdf else "",
+    f'Regenerado el {fecha(dt.date.today().isoformat())}.',
+])}""", depth=1,
+        desc=f'Asistencia de {CHAMBER[ch]} el {fecha(s["held_on"])}: '
+             f'{t["asistieron"]} presentes, {t["falta"]} ausentes.')
+
+
+def render_att_index(d, today):
+    """The session-by-session view, plus the two rankings the data supports."""
+    trows = []
+    for s in d["sesiones"]:
+        t = s["tally"]
+        p, usable = pct_or_note(t["asistieron"], t["total"], "asistentes")
+        trows.append(
+            f'<tr><td><a href="asistencia/{esc(s["slug"])}.html">'
+            f'{fecha(s["held_on"])}</a></td><td>{esc(s["taken_at"])}</td>'
+            f'<td><span class="chip {s["chamber"].lower()}">'
+            f'{esc(CHAMBER_SHORT[s["chamber"]])}</span></td>'
+            f'<td class="num">{t["presente"] + t["presidencia"]}</td>'
+            f'<td class="num">{t["falta"]}</td>'
+            f'<td class="num">{t["excusa"]}</td>'
+            f'<td class="num">{esc(p) if usable else "—"}</td></tr>')
+    # Who missed most. Only over members with a denominator worth dividing by,
+    # and the count leads, not the rate.
+    rank = []
+    for L in d["legs"]:
+        ok, den, lic, pre = leg_att_rate(d, L)
+        if den:
+            rank.append((den - ok, den, lic, pre, L))
+    rank.sort(key=lambda x: (-x[0], x[4]["full_name"]))
+    top = [x for x in rank if x[0]][:15]
+    rrows = "".join(
+        f'<tr><td><a href="parlamentario/{esc(L["slug"])}.html">'
+        f'{esc(nice_name(L["full_name"]))}</a></td>'
+        f'<td>{esc(CHAMBER_SHORT[L["chamber"]])}</td>'
+        f'<td>{esc(L["party"] or "—")}</td>'
+        f'<td class="num">{f}</td><td class="num">{den}</td>'
+        f'<td class="num">{lic}</td></tr>'
+        for f, den, lic, pre, L in top)
+    per_ch = []
+    for ch in ("D", "S"):
+        ss = [s for s in d["sesiones"] if s["chamber"] == ch]
+        if not ss:
+            continue
+        rates = [round(100 * s["tally"]["asistieron"] / s["tally"]["total"])
+                 for s in ss if s["tally"]["total"]]
+        per_ch.append(
+            f'<div><dt>{esc(CHAMBER_SHORT[ch])}</dt>'
+            f'<dd>{len(ss)}<small>tomas de asistencia · mediana de asistencia '
+            f'{median(rates)}%</small></dd></div>')
+    total_rows = sum(s["tally"]["total"] for s in d["sesiones"])
+    srcs = sorted({s["source_url"] for s in d["sesiones"] if s["source_url"]})
+    body = f"""<span class="eyebrow">Asistencia al Pleno</span>
+<h1>{len(d["sesiones"])} tomas de asistencia</h1>
+<p class="lede">Quién estuvo en el hemiciclo y quién no, sesión por sesión.
+Cada sesión pasa lista más de una vez y cada toma tiene su hora, así que la
+unidad de esta página es la toma, no el día. Son {num(total_rows)} registros
+individuales leídos de los PDF que publican las cámaras.</p>
+<div class="note">Dos reglas que este sitio no rompe: <b>una licencia no es una
+inasistencia</b> —es un permiso de la Mesa Directiva y queda fuera del
+denominador— y <b>quien preside la sesión no está faltando</b>, aunque la lista
+no le registre marca. Los porcentajes de esta página se calculan solo sobre las
+tomas en las que a la persona le correspondía estar.</div>
+<section><h2>Resumen por cámara</h2><dl class="stat">{"".join(per_ch)}</dl></section>
+<section><h2>Sesión por sesión</h2>
+<div class="scroll"><table><thead><tr><th>Sesión</th><th>Hora</th><th>Cámara</th>
+<th>Presentes</th><th>Ausentes</th><th>Licencias</th><th>% asistencia</th>
+</tr></thead><tbody>{"".join(trows)}</tbody></table></div>
+<p class="sm mut">Cada fecha abre la lista nominal completa de esa toma, con el
+estado de cada parlamentario y el enlace a su ficha.</p></section>
+{f'''<section><h2>Quiénes acumulan más inasistencias</h2>
+<div class="scroll"><table><thead><tr><th>Parlamentario</th><th>Cámara</th>
+<th>Grupo</th><th>Inasistencias</th><th>Tomas que le correspondían</th>
+<th>Licencias</th></tr></thead><tbody>{rrows}</tbody></table></div>
+<p class="sm mut">Se cuentan inasistencias, no porcentajes: con {len(d["sesiones"])}
+tomas registradas en total, un porcentaje sobre tan pocas oportunidades exagera
+cualquier diferencia. Las licencias se muestran al lado precisamente para que no
+se confundan con faltas.</p></section>''' if top else ""}
+{prov([
+    'Listas de asistencia publicadas en PDF por cada cámara al pie de la sesión. '
+    'No existen como dato estructurado en ningún portal: cada una se lee del PDF.',
+    'Documentos: ' + " · ".join(f'<a href="{esc(u)}">{esc(pathlib.PurePath(u).name)} ↗</a>'
+                                for u in srcs),
+    'Varias listas llevan el sello PROVISIONAL de la propia cámara; la página de '
+    'cada toma lo dice cuando es el caso.',
+    f'Regenerado el {fecha(today)}.',
+])}"""
+    return shell("Asistencia al Pleno", body, 0,
+                 desc="Asistencia de diputados y senadores al Pleno, sesión por "
+                      "sesión, con licencias contadas aparte.")
+
+
 # ---------------------------------------------------------------- comisiones
 
 # Neither cámara publishes who sits on a committee: the portals list names and
@@ -2002,6 +2516,21 @@ def mem_li(r, m, tag=""):
     bench = m["bench"] or (m["leg"] or {}).get("party")
     tag_html = f' <span class="rank">{esc(tag)}</span>' if tag else ""
     return f'<li>{who} {party_chip(bench, r)}{tag_html}</li>'
+
+
+def alias_note(rows, c):
+    """The oficios do not use the name the cuadro uses. Saying which title they
+    wrote is cheaper than pretending the difference is not there."""
+    names = sorted({m["alias_name"] for m in rows if m.get("alias_name")})
+    if not names:
+        return ""
+    return ('<p class="sm mut">' + ("El oficio llama" if len(names) == 1
+                                    else "Los oficios llaman")
+            + " a esta comisión "
+            + " y ".join(f"«{esc(n)}»" for n in names)
+            + f'. Es el mismo órgano que el cuadro aprobado nombra '
+              f'«{esc(c["name"])}»: lo tratamos como uno solo en lugar de '
+              f'abrirle una comisión aparte que no existe.</p>')
 
 
 def roster(d, c, r="../"):
@@ -2054,7 +2583,9 @@ def roster(d, c, r="../"):
              'había designado antes; no es una plaza adicional.</p>')
             + f'<ul class="roll" id="cambios">'
             + "".join(mem_li(r, m, tag=m["role"]) for m in amd)
-            + f'</ul><p><a class="doc" href="{esc(src)}">Oficio recogido en el '
+            + "</ul>"
+            + alias_note(amd, c)
+            + f'<p><a class="doc" href="{esc(src)}">Oficio recogido en el '
               f'Diario de los Debates ↗</a></p>')
     out.append("</section>")
     return "".join(out)
@@ -2114,7 +2645,8 @@ def main():
     # Ids upstream are not stable (vote ids are being re-keyed right now), so a
     # page whose slug changed would otherwise linger forever as a dead copy.
     # Only our own output is removed; anything else in site/ is left alone.
-    for sub in ("proyecto", "proyectos", "parlamentario", "votacion", "comision"):
+    for sub in ("proyecto", "proyectos", "parlamentario", "votacion", "comision",
+                "asistencia"):
         if (OUT / sub).exists():
             shutil.rmtree(OUT / sub)
     con = db.connect(DBP)
@@ -2129,9 +2661,12 @@ def main():
         n["proyecto"] += 1
 
     # ---- legislators (peer baselines first: one pass, no N+1)
-    base = {"bills": {}, "prim": {}, "mots": {}, "asis": {}}
+    base = {"bills": {}, "prim": {}, "mots": {}, "asis": {}, "asist": {}}
     for L in d["legs"]:
         c = L["chamber"]
+        ok, den, _lic, _pre = leg_att_rate(d, L)
+        if den >= 5:
+            base["asist"].setdefault(c, []).append(round(100 * ok / den))
         mine = [x for x in d["leg_bills"].get(L["slug"], [])
                 if d["bill_by_id"][x[0]]["per_par"] == L["per_par"]]
         base["bills"].setdefault(c, []).append(len(mine))
@@ -2147,7 +2682,16 @@ def main():
         base[c].setdefault("S", [0])
     for L in d["legs"]:
         write(OUT / "parlamentario" / f'{L["slug"]}.html', render_leg(d, L, base))
+        write(OUT / "parlamentario" / f'{L["slug"]}.csv', leg_csv(d, L))
         n["parlamentario"] += 1
+        n["csv"] += 1
+
+    # ---- asistencia: 13 takings, one page each plus the index
+    for s in d["sesiones"]:
+        write(OUT / "asistencia" / f'{s["slug"]}.html', render_att(d, s))
+        n["listado"] += 1
+    write(OUT / "asistencia.html", render_att_index(d, today))
+    n["listado"] += 1
 
     # ---- votes
     for v in d["votes"]:
@@ -2177,10 +2721,18 @@ def main():
             y = b["presented_on"][:4]
             bucket(f"anio-{y}", f"Proyectos presentados en {y}", y, b)
     for key, (title, _label, bs) in groups.items():
+        # The CSV covers the facet, not the page: paginating a download would
+        # be a download of the pagination.
+        write(OUT / "proyectos" / f"{key}.csv", bills_csv(d, bs))
+        n["csv"] += 1
         intro = (f'<div class="crumb"><a href="../index.html">Inicio</a> › '
                  f'<a href="../proyectos.html">Proyectos de ley</a></div>'
                  f'<span class="eyebrow">{num(len(bs))} proyectos</span>'
-                 f'<h1>{esc(title)}</h1>')
+                 f'<h1>{esc(title)}</h1>'
+                 f'<p><a href="{key}.csv">Descargar estos {num(len(bs))} '
+                 f'proyectos en CSV</a> — el filtro completo, no solo la página '
+                 f'que está viendo: una fila por proyecto, con estado, etapa, '
+                 f'comisiones, número de firmas y el enlace a su ficha.</p>')
         for fn, htm in paginate(key, title, intro,
                                 [bill_row("../", b) for b in bs], 1, prov_lines=src):
             write(OUT / "proyectos" / fn, htm)
@@ -2203,9 +2755,21 @@ oficial traducido a lenguaje llano y el trámite que le falta a cada uno.</p>
 {facet_links("anio-", sort=lambda k: k)}</section>
 <section><h2>Presentados más recientemente</h2>
 <ul class="feed">{"".join(bill_row("", b) for b in d["bills"][:40])}</ul></section>
+<section><h2>Descarga y cita</h2>
+<p><a href="proyectos.csv">Descargar los {num(len(d["bills"]))} proyectos en
+CSV</a> — el corpus entero: código, periodo, cámara, título, estado, etapa,
+fecha, proponente, comisiones, número de firmas, autor principal y el enlace a
+la ficha de cada uno.</p>
+<p class="sm mut">Cada filtro de esta página tiene además su propio CSV, con
+exactamente las filas de ese filtro: entre en cualquiera de los listados de
+arriba y el enlace está al inicio. Cita sugerida: «Registro de proyectos de ley
+del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
+</section>
 {prov(src)}"""
     write(OUT / "proyectos.html", shell("Proyectos de ley", hub, 0))
+    write(OUT / "proyectos.csv", bills_csv(d, d["bills"]))
     n["listado"] += 1
+    n["csv"] += 1
 
     # ---- committees: the roster (Senado only) and the bills sitting there.
     # Half the committees have one and half the other, so each half of the page
@@ -2385,6 +2949,14 @@ quiénes rompieron con su grupo y la lista completa descargable.</p>{extra}
     write(OUT / "votaciones.html", shell("Votaciones", body, 0))
     n["listado"] += 1
 
+    # ---- acerca + robots. The site deploys public before it is finished, so
+    # it ships closed to crawlers and open about what it is.
+    write(OUT / "acerca.html", render_acerca(d, today))
+    n["listado"] += 1
+    write(OUT / "robots.txt",
+          "# Este sitio todavía no está listo para ser indexado.\n"
+          "User-agent: *\nDisallow: /\n")
+
     # ---- home
     write(OUT / "index.html", render_home(d, base, today))
     n["listado"] += 1
@@ -2392,14 +2964,135 @@ quiénes rompieron con su grupo y la lista completa descargable.</p>{extra}
     con.close()
     print(f"páginas de proyecto : {n['proyecto']}")
     print(f"páginas de parlamentario: {n['parlamentario']}")
-    print(f"páginas de votación : {n['votacion']} (+{n['csv']} CSV)")
-    print(f"listados e índices  : {n['listado']}")
+    print(f"páginas de votación : {n['votacion']}")
+    print(f"listados e índices  : {n['listado']} "
+          f"(incluye {len(d['sesiones'])} tomas de asistencia)")
+    print(f"descargas CSV       : {n['csv']} "
+          f"(votaciones, parlamentarios, cada faceta de proyectos y el corpus)")
     print(f"total               : {sum(n.values()) - n['csv']} páginas HTML")
     print(f"tiempo              : {time.time() - t0:.1f}s -> {OUT}")
     print("CAPS: fichas de parlamentario listan 60 proyectos y 40 mociones "
           "recientes (el total sí se muestra); los listados paginan de "
           f"{PER_PAGE} en {PER_PAGE} sin recortar nada.")
     return n
+
+
+REPO = "https://github.com/axvg/congreso"
+
+
+def render_acerca(d, today):
+    """Who is speaking, where every number comes from, and how to argue with it.
+    Counts are computed, not typed: a page that claims the site has N of
+    something has to be right the day after the next ingest."""
+    prov_votes = sum(1 for v in d["votes"] if v["provisional"])
+    prov_att = len({s["source_url"] for s in d["sesiones"]
+                    if "PROVISIONAL" in (s["source_url"] or "").upper()})
+    body = f"""<div class="crumb"><a href="index.html">Inicio</a> › Acerca</div>
+<span class="eyebrow">Acerca de este sitio</span>
+<h1>Qué es Hemiciclo y qué no es</h1>
+<p class="lede"><b>Esto no es el Congreso de la República.</b> Es un registro
+independiente, hecho por una persona, que toma los datos que el Congreso publica
+y los ordena para que se puedan leer y comprobar. No representamos a ninguna
+cámara, ni a ninguna bancada, ni gestionamos trámite alguno.</p>
+
+<section><h2>Quién lo hace</h2>
+<p>Lo construye y mantiene <b>axvg</b>, a título personal, sin financiamiento ni
+vínculo con el Congreso, con partidos ni con medios. El código que descarga los
+datos y genera cada una de estas páginas es público:
+<a href="{REPO}">{REPO}</a>. Cualquiera puede correrlo y obtener este mismo
+sitio a partir de las mismas fuentes; esa es la única garantía que podemos
+ofrecer de que no hay una mano editorial en medio.</p></section>
+
+<section><h2>De dónde sale cada dato</h2>
+<dl class="kv">
+<div><dt>Proyectos de ley</dt><dd>Registro oficial del Congreso,
+<code>{API}/proyecto-ley</code>, y el expediente de cada proyecto en el portal
+SPLey. De ahí salen el título, la sumilla, el estado, la fecha, las firmas, el
+historial de movimientos y las comisiones asignadas.</dd></div>
+<div><dt>Estado traducido a lenguaje llano</dt><dd>Lo agregamos nosotros. El
+Congreso publica un código («EN COMISIÓN»); la frase que lo explica y los pasos
+que faltan los escribimos aquí, a partir del Reglamento del Congreso. Es la
+única parte redactada del sitio y por eso se distingue del dato.</dd></div>
+<div><dt>Parlamentarios</dt><dd>Portales de la
+<a href="https://diputados.congreso.gob.pe/">Cámara de Diputados</a> y del
+<a href="https://senado.congreso.gob.pe/">Senado</a>, vía su API REST. Del
+padrón 2021-2026 solo sobrevive el nombre en el filtro de autores de la base de
+proyectos: por eso esas fichas no tienen bancada ni foto.</dd></div>
+<div><dt>Mociones</dt><dd>Registro de mociones,
+<code>smociones-portal-service</code>.</dd></div>
+<div><dt>Votaciones nominales</dt><dd>Las actas en PDF que cada cámara publica
+después de la sesión, y el Diario de los Debates cuando existe. Leemos el
+documento; no hay una versión en datos.</dd></div>
+<div><dt>Asistencia</dt><dd>Las listas de asistencia en PDF de cada sesión, una
+por toma. Tampoco existen como dato: <a href="asistencia.html">aquí está cada
+documento enlazado</a>.</dd></div>
+<div><dt>Comisiones</dt><dd>Los nombres, del expediente de cada proyecto. La
+composición, del Diario de los Debates de la sesión en que el Senado aprobó sus
+cuadros: ninguna cámara publica quién integra sus comisiones.</dd></div>
+<div><dt>El cruce entre padrón y firmas</dt><dd>Por nombre normalizado. No
+existe un identificador compartido entre el padrón de las cámaras y la base de
+proyectos; cuando un nombre no cruza, la página lo dice en vez de
+adivinar.</dd></div>
+</dl></section>
+
+<section><h2>Lo que es provisional, dicho como tal</h2>
+<p>Parte del material de votación viene sellado por la propia cámara como
+<b>INFORMACIÓN PROVISIONAL · SIN LOS VOTOS ORALES</b>: el tablero electrónico no
+recoge los votos que se emiten de viva voz, y el conteo definitivo se lee en
+sala y se publica después en el Diario de los Debates.
+{f"Hoy {prov_votes} de las {len(d['votes'])} votaciones publicadas en este sitio provienen de un acta con ese sello, y {prov_att} de las listas de asistencia llevan la misma marca." if prov_votes or prov_att else ""}
+Donde la fuente se declara provisional, la página lo dice, muestra las cifras en
+conflicto una al lado de otra y nombra cuál está usando. Ninguna cifra
+provisional se presenta como definitiva.</p>
+<p>La misma regla vale para las personas: <b>una licencia no es una
+inasistencia</b> y <b>quien preside la sesión no está faltando</b>. Ninguna de
+las dos entra jamás en el denominador de un porcentaje de asistencia, y no
+publicamos un porcentaje sobre menos de cinco oportunidades: decimos el conteo
+y por qué no damos la tasa.</p></section>
+
+<section><h2>Pedir una corrección</h2>
+<p>Si algo sobre usted o sobre alguien más está mal —un nombre mal cruzado, un
+voto que no es el suyo, una inasistencia que era una licencia— <b>pídanos la
+corrección y la haremos</b>. Abra un caso en
+<a href="{REPO}/issues">{REPO}/issues</a> indicando la página, el dato que está
+mal y, si puede, el documento oficial que lo demuestra.</p>
+<p>Dos cosas que conviene saber de antemano. Primero: si el error está en la
+fuente del Congreso, lo corregimos igual, pero anotando qué dice el documento
+original, porque este sitio tiene que poder contrastarse contra él. Segundo: no
+borramos hechos publicados por el Congreso a pedido de quien aparece en ellos;
+un voto registrado es un acto público.</p></section>
+
+<section><h2>Licencia y reuso</h2>
+<p>Los datos originales son actos públicos del Congreso de la República del
+Perú y su reuso es libre. Lo que agregamos nosotros —la traducción de los
+estados, los cruces, las tasas calculadas y estas páginas— se ofrece bajo
+<a href="https://creativecommons.org/licenses/by/4.0/deed.es">Creative Commons
+Atribución 4.0</a>: úselo para lo que quiera, incluso comercialmente, citando
+la fuente y enlazando a la página de la que lo tomó.</p>
+<p>Para reusar en volumen hay descargas en CSV: la
+<a href="proyectos.html">lista de proyectos</a> y cada uno de sus filtros, cada
+<a href="votaciones.html">votación nominal</a> y la ficha de cada
+<a href="parlamentarios.html">parlamentario</a>. Preferimos que use el CSV a
+que raspe el HTML; si necesita un corte que no existe, pídalo en el
+repositorio.</p></section>
+
+<section><h2>Por qué todavía no queremos aparecer en buscadores</h2>
+<p>Cada página de este sitio lleva <code>noindex</code> y el
+<a href="robots.txt">robots.txt</a> desautoriza a los rastreadores. Es
+deliberado: el sitio es público para poder ser revisado, no para ser el primer
+resultado sobre una persona con nombre y apellido antes de que cada cruce esté
+verificado. Se quitará cuando lo esté.</p></section>
+{prov([
+    'Este sitio se regenera entero en cada corrida de la ingesta: no hay base '
+    'de datos en producción ni edición manual de páginas.',
+    f'Última regeneración: {fecha(today)}. '
+    f'{num(len(d["bills"]))} proyectos, {len(d["legs"])} parlamentarios, '
+    f'{len(d["votes"])} votaciones y {len(d["sesiones"])} tomas de asistencia.',
+    f'Código y correcciones: <a href="{REPO}">{REPO}</a>.',
+])}"""
+    return shell("Acerca de este sitio", body, 0,
+                 desc="Quién hace Hemiciclo, de dónde sale cada dato, cómo pedir "
+                      "una corrección y bajo qué licencia se puede reusar.")
 
 
 def render_home(d, base, today):
@@ -2503,6 +3196,7 @@ realmente a ser ley. <a href="proyectos.html">Explorar por etapa</a>.</p></secti
 <a href="parlamentarios.html">Padrón de parlamentarios <b>{len(d["legs"])}</b></a>
 <a href="mociones.html">Mociones <b>{len(d["motions"])}</b></a>
 <a href="votaciones.html">Votaciones nominales <b>{len(d["votes"])}</b></a>
+<a href="asistencia.html">Asistencia al Pleno <b>{len(d["sesiones"])}</b></a>
 <a href="proyectos/p2026-D.html">Proyectos de Diputados <b>{sum(1 for b in cur if b["chamber"] == "D")}</b></a>
 <a href="proyectos/p2026-S.html">Proyectos del Senado <b>{sum(1 for b in cur if b["chamber"] == "S")}</b></a>
 </div></section>
@@ -2663,6 +3357,129 @@ def demo():
         assert '<ul class="feed" id="ls"></ul>' not in t, f"{p.name}: empty bill list"
         assert '<ul class="roll" id="titulares"></ul>' not in t, f"{p.name}: empty roster"
     assert (OUT / "comisiones.html").exists()
+
+    # ---- asistencia. 1 340 rows that were ingested and rendered nowhere. The
+    # two rules that matter are about named people, so they are asserted against
+    # the generated HTML, not against the helper that produced it.
+    takings = con.execute(
+        "SELECT chamber, held_on, taken_at, count(*) n FROM attendance "
+        "GROUP BY 1, 2, 3").fetchall()
+    assert takings, "no attendance in the DB"
+    for k in takings:
+        sl = (f'{k["chamber"].lower()}-{k["held_on"]}-'
+              f'{slugify(k["taken_at"])}')
+        t = (OUT / "asistencia" / f"{sl}.html").read_text()
+        rows = t.split('<tbody id="ls">')[1].split("</tbody>")[0]
+        assert rows.count("<tr") == k["n"], \
+            f'{sl}: {rows.count("<tr")} filas en la página, {k["n"]} en la base'
+        assert "../parlamentario/" in rows, f"{sl}: roster without links"
+    assert (OUT / "asistencia.html").exists()
+    idx = (OUT / "asistencia.html").read_text()
+    assert idx.count("asistencia/") >= len(takings), "index misses a taking"
+
+    # A licencia is not an absence and neither is presiding: not in the label,
+    # not in the denominator, not anywhere on the person's page.
+    d2 = load(con)
+    for L in d2["legs"]:
+        xs = d2["leg_att"].get(L["slug"], [])
+        if not xs:
+            continue
+        t = (OUT / "parlamentario" / f'{L["slug"]}.html').read_text()
+        blk = t.split("<h2>Asistencia al Pleno</h2>")[1].split("</section>")[0]
+        ok, den, lic, pre = leg_att_rate(d2, L)
+        raw = con.execute(
+            "SELECT status, count(*) FROM attendance WHERE legislator_id=? "
+            "GROUP BY 1", (L["id"],)).fetchall()
+        raw = dict(raw)
+        assert den == raw.get("PRE", 0) + raw.get("AUS", 0) - pre, \
+            f'{L["slug"]}: denominador {den} incluye licencias o presidencia'
+        assert lic == sum(v for k, v in raw.items() if k in ("LO", "LE", "LP", "L")), \
+            f'{L["slug"]}: licencias mal contadas'
+        assert f"{ok} de {den}" in blk, f'{L["slug"]}: rate not published'
+        # every excused taking is rendered as such, never as an absence
+        assert blk.count("Ausente") == den - ok, \
+            f'{L["slug"]}: {blk.count("Ausente")} ausencias en la página, {den - ok} reales'
+        if den < 5:
+            assert "muy pocas" in blk, f'{L["slug"]}: bare rate over {den} takings'
+    for s in d2["sesiones"]:
+        for x in s["rows"]:
+            if att_state(d2, s, x)[1] != "falta":
+                continue
+            assert (s["chamber"], s["held_on"],
+                    (x["leg"] or {}).get("slug")) not in d2["presided"], \
+                f'{x["name_raw"]}: presiding counted as an absence'
+
+    # ---- the 22 people with a page in each Congress link both ways.
+    twins = [(a, b) for a, bs in d2["twin"].items() for b in bs]
+    assert len(twins) >= 44, f"only {len(twins)} cross-links"
+    for slug, other in twins:
+        t = (OUT / "parlamentario" / f"{slug}.html").read_text()
+        assert f'{other["slug"]}.html' in t and "Es la misma persona" in t, \
+            f"{slug} does not point at its other Congress"
+
+    # ---- no page may name a phantom committee, and none may get a page.
+    assert d2["alias"], "the five oficio-only committees resolved to nothing"
+    ghosts = {con.execute("SELECT name FROM committee WHERE id=?",
+                          (cid,)).fetchone()[0]: c
+              for cid, c in d2["alias"].items()}
+    for name, canon in ghosts.items():
+        assert name != canon["name"]
+        sl = slugify(name)
+        assert not list((OUT / "comision").glob(f"{sl}*.html")), f"page for {name}"
+    hit = [p for p in OUT.rglob("*.html")
+           for g in ghosts if f">{g}<" in p.read_text()]
+    assert not hit, f"phantom committee named on {hit[:2]}"
+    nsen = con.execute("SELECT count(*) FROM committee WHERE per_par=2026").fetchone()[0]
+    assert len(d2["cttes"]) == nsen + 24 - len(ghosts), "committee count off"
+
+    # ---- CSV on legislators and on the bill corpus, and they have to parse.
+    L = d2["legs"][0]
+    lp = OUT / "parlamentario" / f'{L["slug"]}.csv'
+    with lp.open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows and {"tipo", "fecha", "pagina"} <= set(rows[0]), "leg CSV shape"
+    kinds = {r["tipo"] for r in rows}
+    assert kinds & {"proyecto", "mocion", "votacion", "comision", "asistencia"}, kinds
+    assert f'{L["slug"]}.csv' in (OUT / "parlamentario" / f'{L["slug"]}.html').read_text(), \
+        "legislator CSV not linked from the page"
+    with (OUT / "proyectos.csv").open() as fh:
+        allrows = list(csv.DictReader(fh))
+    nb = con.execute("SELECT count(*) FROM bill").fetchone()[0]
+    assert len(allrows) == nb, f"{len(allrows)} rows in proyectos.csv, {nb} bills"
+    assert "proyectos.csv" in (OUT / "proyectos.html").read_text(), "corpus CSV unlinked"
+    facet = con.execute("SELECT count(*) FROM bill WHERE per_par=2021").fetchone()[0]
+    with (OUT / "proyectos" / "p2021-C.csv").open() as fh:
+        assert len(list(csv.DictReader(fh))) == facet, "facet CSV != facet size"
+    assert "p2021-C.csv" in (OUT / "proyectos" / "p2021-C.html").read_text(), \
+        "facet CSV not linked on its own page"
+
+    # ---- the bill page states a base rate as a number, with its denominator,
+    # instead of asserting what "la mayoría" of bills do.
+    row = con.execute("SELECT per_par, chamber, ply_num FROM bill "
+                      "WHERE status='EN COMISIÓN' LIMIT 1").fetchone()
+    t = (OUT / "proyecto" / str(row["per_par"]) / (row["chamber"] or "C")
+         / f'{row["ply_num"]}.html').read_text()
+    blk = t.split("<h2>Qué suele pasar en esta etapa</h2>")[1].split("</section>")[0]
+    rt = d2["rates"]["stage"]["COM"]
+    assert num(rt["n"]) in blk and num(rt["ley"]) in blk and num(rt["dictamen"]) in blk, \
+        "the base rate on the bill page is not the computed one"
+    assert re.search(r"\d+%", blk), "no percentage on the base-rate block"
+    assert "La mayoría de proyectos se quedan aquí" not in t, \
+        "unbacked claim still published"
+
+    # ---- noindex and the legal page, on every page this build writes.
+    # progress.html and balance.html belong to progress.py; robots.txt covers them.
+    pages = [p for p in OUT.rglob("*.html")
+             if p.name not in ("progress.html", "balance.html")]
+    for p in pages:
+        t = p.read_text()
+        assert '<meta name="robots" content="noindex,nofollow">' in t, f"{p}: indexable"
+        assert "acerca.html" in t, f"{p}: no link to the legal page"
+    assert (OUT / "robots.txt").read_text().strip().endswith("Disallow: /")
+    ac = (OUT / "acerca.html").read_text()
+    for must in ("no es el Congreso", "corrección", "Creative Commons",
+                 "PROVISIONAL", "issues", REPO):
+        assert must in ac, f"acerca.html says nothing about {must}"
 
     # 2021 bills must reach people once the old roster lands; until then this
     # asserts the graph exists wherever the DB can support it.

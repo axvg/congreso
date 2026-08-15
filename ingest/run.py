@@ -41,7 +41,10 @@ def textos(con, limit=None, workers=4):
 
     def grab(bid):
         doc = texts.primary_doc(con, bid)
-        return bid, doc, texts.fetch_pdf(doc["doc_id"], doc["doc_url"])
+        try:
+            return bid, doc, texts.fetch_pdf(doc["doc_id"], doc["doc_url"]), None
+        except texts.TooBig as e:
+            return bid, doc, None, f"documento de {e}: publicado como imagen"
 
     ok = skip = fail = 0
     # ponytail: 4 workers and no backoff beyond api.fetch's; it is a public
@@ -49,19 +52,24 @@ def textos(con, limit=None, workers=4):
     with cf.ThreadPoolExecutor(int(workers)) as pool:
         for i, fut in enumerate(cf.as_completed(pool.submit(grab, b) for b in ids), 1):
             try:
-                bid, doc, path = fut.result()
-                body, pages = texts.extract(path)
-                # ponytail: the text is what we keep; 14,878 PDFs is ~7 GB of
-                # files we have already read and that are one public GET away.
-                path.unlink(missing_ok=True)
-                if len(body) < 200:
-                    skip += 1
-                    continue
+                bid, doc, path, note = fut.result()
+                body, pages = ("", 0) if note else texts.extract(path)
+                if path:
+                    # ponytail: the text is what we keep; the PDFs are ~7 GB of
+                    # files already read and one public GET away.
+                    path.unlink(missing_ok=True)
+                if not note and len(body) < 200:
+                    note = "sin capa de texto: publicado como imagen"
+                # Store either way, with the reason -- so the page can say why
+                # there is no text instead of hiding the section, and so the run
+                # does not re-download it tomorrow.
                 db.upsert(con, "bill_text", {
                     "bill_id": bid, "doc_id": doc["doc_id"], "pages": pages,
-                    "chars": len(body), "body": body, "source_url": doc["doc_url"],
+                    "chars": len(body), "body": None if note else body,
+                    "note": note, "source_url": doc["doc_url"],
                     "fetched_at": _now()})
-                ok += 1
+                ok += not note
+                skip += bool(note)
             except Exception as e:  # noqa: BLE001
                 fail += 1
                 if fail < 6:

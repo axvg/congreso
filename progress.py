@@ -114,6 +114,7 @@ def render(cfg, cov, counts):
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     return f"""<title>Hemiciclo Build Board</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
 <style>{CSS}</style>
 <div class="wrap">
 <header>
