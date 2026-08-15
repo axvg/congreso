@@ -37,10 +37,17 @@ def textos(con, limit=None, workers=4):
     if limit:
         q += f" LIMIT {int(limit)}"
     ids = [r[0] for r in con.execute(q).fetchall()]
-    print(f"textos: {len(ids)} por descargar", flush=True)
+    # Resolve every document here, in this thread: a sqlite connection cannot be
+    # used from the workers, and doing the lookup inside grab() failed all 14,907
+    # with "SQLite objects created in a thread can only be used in that same
+    # thread" -- uniformly, which is the kind of failure that looks like a
+    # network problem until you read one of the messages.
+    jobs = [(b, texts.primary_doc(con, b)) for b in ids]
+    jobs = [(b, d) for b, d in jobs if d]
+    print(f"textos: {len(jobs)} por descargar", flush=True)
 
-    def grab(bid):
-        doc = texts.primary_doc(con, bid)
+    def grab(job):
+        bid, doc = job
         try:
             return bid, doc, texts.fetch_pdf(doc["doc_id"], doc["doc_url"]), None
         except texts.TooBig as e:
@@ -50,7 +57,7 @@ def textos(con, limit=None, workers=4):
     # ponytail: 4 workers and no backoff beyond api.fetch's; it is a public
     # service and a bulk read, so stay well under what a browsing user costs.
     with cf.ThreadPoolExecutor(int(workers)) as pool:
-        for i, fut in enumerate(cf.as_completed(pool.submit(grab, b) for b in ids), 1):
+        for i, fut in enumerate(cf.as_completed(pool.submit(grab, j) for j in jobs), 1):
             try:
                 bid, doc, path, note = fut.result()
                 body, pages = ("", 0) if note else texts.extract(path)
@@ -76,7 +83,7 @@ def textos(con, limit=None, workers=4):
                     print(f"  {e!r}", flush=True)
             if i % 200 == 0:
                 con.commit()
-                print(f"  {i}/{len(ids)} ok={ok} sin-texto={skip} fail={fail}",
+                print(f"  {i}/{len(jobs)} ok={ok} sin-texto={skip} fail={fail}",
                       flush=True)
     con.commit()
     print(f"textos: ok={ok} sin-texto={skip} fail={fail}", flush=True)
