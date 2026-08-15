@@ -366,7 +366,7 @@ def _logo_credits():
     wrote next to the images. Read once; every page that shows a logo prints a
     line from it, so the attribution can never drift from the files."""
     import json
-    for base in (OUT / "logos", ROOT / "site" / "logos"):
+    for base in (ROOT / "assets" / "logos", OUT / "logos"):
         try:
             return json.loads((base / "creditos.json").read_text("utf-8"))
         except Exception:
@@ -4265,8 +4265,12 @@ def main():
     # The bench logos live in the repo, not in the database. Copy them into the
     # output so `build.py <db> <anywhere>` is a complete site: an earlier
     # version only worked when OUT happened to be the checked-in site/.
-    src_logos = ROOT / "site" / "logos"
-    if src_logos.is_dir() and src_logos.resolve() != (OUT / "logos").resolve():
+    # assets/ is the source and is tracked; site/ is generated and gitignored.
+    # These lived under site/logos/ and were therefore the one input to the build
+    # that a fresh `git clone` did not have -- and that an `rm -rf site` deleted
+    # for good. Keep inputs out of the output directory.
+    src_logos = ROOT / "assets" / "logos"
+    if src_logos.is_dir():
         shutil.copytree(src_logos, OUT / "logos", dirs_exist_ok=True)
     con = db.connect(DBP)
     d = load(con)
