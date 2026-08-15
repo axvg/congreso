@@ -328,18 +328,28 @@ def num(n):
 # benches around the arc in that same order, so the only bench colours that ever
 # touch are the adjacent pairs the validator measured.
 #
-# The six are ALSO a lightness ladder, which is the part an earlier version got
-# wrong: six hues at one lightness are six identical greys, so a greyscale print
-# or a screenshot run through a desaturating filter turned the whole hemicycle
-# into one blob. Relative luminance now steps 0x48 · 0x54 · 0x62 · 0x70 · 0x7E ·
-# 0x88 in light and 0x6A · 0x73 · 0x76 · 0x82 · 0x89 · 0x8B in dark, so the
-# benches separate by brightness alone with no colour at all.
+# The six are NOT a lightness ladder, and an earlier version of this comment
+# claimed steps (0x48·0x54·…, 0x6A·0x73·…) that the palette has never had. What
+# is actually there, as relative luminance in slot order:
 #
-#   validate_palette.js "#008058,#3355A7,#CB6F2E,#5E3A91,#DD6F86,#8F7200"
-#        --mode light --surface "#FFFDFA"   -> every check PASS,
-#        worst adjacent CVD ΔE 13.5, normal-vision 20.2, contrast all >= 3:1
+#     light  .161  .100  .243  .075  .285  .179
+#     dark   .231  .236  .282  .151  .275  .187
+#
+# so a desaturating filter puts gp1 and gp2 at 1.01:1 of each other in dark and
+# the arc does not separate by brightness alone. It does not have to: every
+# bench boundary in the hemicycle is drawn as a dashed rule with the bench's
+# monogram beside it, every legend entry carries the logo and the name, and no
+# reading of these pictures asks the reader to tell two greys apart. The one
+# thing the colours do have to do is clear 3:1 against the surface they are
+# painted on — which is --ground, the page, not --raised, the card, and that is
+# what an earlier validation got wrong.
+#
+#   validate_palette.js "#008058,#3355A7,#CB6F2E,#5E3A91,#D2657D,#8F7200"
+#        --mode light --surface "#F7F4EF"   -> every check PASS,
+#        worst adjacent CVD ΔE 11.6, normal-vision 18.7, contrast all >= 3:1
+#        (--gp5 was #DD6F86: 2.86:1 on --ground, a fail this catches now)
 #   validate_palette.js "#0B9672,#6384CE,#CB7E4D,#7B5EAA,#CF7486,#8E7600"
-#        --mode dark --surface "#1E1917"    -> every check PASS,
+#        --mode dark --surface "#14100E"    -> every check PASS,
 #        worst adjacent CVD ΔE 12.9, normal-vision 17.8, contrast all >= 3:1
 #
 # The arc order was chosen by measuring all fifteen pairs in both modes and
@@ -435,10 +445,12 @@ CSS = """
   --line:#E2DAD0; --accent:#9E2B32; --ok:#2F6B62; --wait:#8A5E0B; --dead:#6E655C;
   --sen:#2F4A6B; --dip:#9E2B32; --sunk:#F0EAE1; --shade:#00000010;
   --gp1:#008058; --gp2:#3355A7; --gp3:#CB6F2E;
-  --gp4:#5E3A91; --gp5:#DD6F86; --gp6:#8F7200; --gp0:#6E655C;
+  --gp4:#5E3A91; --gp5:#D2657D; --gp6:#8F7200; --gp0:#6E655C;
   --si:#1F6B4A; --no:#A4302C; --abst:#7F5A0A; --aus:#6E655C;
   --lic:#2F4A6B; --pres:#5A4FA0; --vio:#5A4FA0;
-  --grid:#D8CFC4; --off:#9E9286;
+  /* every one of these is a fill on --ground, so 3:1 is measured there:
+     --gp5 3.25:1 (was #DD6F86, 2.86) and --off 3.30:1 (was #9E9286, 2.77) */
+  --grid:#D8CFC4; --off:#8F8578;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --ground:#14100E; --raised:#1E1917; --ink:#EDE7DF; --muted:#9E948A;
@@ -559,19 +571,17 @@ a.bchip:hover{border-bottom-color:currentColor}
 .hemi .holen{fill:var(--ink);font-family:ui-serif,Georgia,serif;font-weight:600;
   text-anchor:middle}
 /* On a phone a 10px seat cannot be a 44px tap target and never will be — 130
-   of them need 250 000 px² and the viewport gives 94 000. The arc is a picture
-   there, and the roster below carries every one of the same links at full size.
-   Above 720px it is a mouse target, where 10px is a normal one. */
+   of them need 250 000 px² and the viewport gives 94 000. So below 720px the
+   seats stop being controls at all and the arc is a picture.
+   This conforms under WCAG 2.5.8 by the *Equivalent* exception, not by any
+   input-device rule — there is none; 2.5.8 applies to a mouse exactly as it
+   applies to a finger. The exception holds because the roster further down the
+   same page offers every one of the same links at 44px. If that roster ever
+   stops being rendered, this rule stops being conformant with it. */
 @media(max-width:719px){.hemi a{pointer-events:none}}
-/* legend swatches echo the seat silhouettes, so the legend is readable in
-   black and white too */
-.key .sw-circle{border-radius:50%;background:currentColor}
-.key .sw-diamond{background:currentColor;transform:rotate(45deg);border-radius:2px}
-.key .sw-square{background:currentColor;border-radius:2px}
-.key .sw-triangle{background:currentColor;
-  clip-path:polygon(50% 0,100% 100%,0 100%)}
-.key .sw-ring{border:3px solid currentColor;border-radius:50%;background:none}
-.key .sw-hollow{border:3px solid currentColor;border-radius:2px;background:none}
+/* The legend swatch that decodes a seat is an SVG drawn by `swatch()`, which
+   calls the same SHAPE table the seat does — see the note there for why it is
+   no longer a <span> with a shape class. */
 .hemifig{margin:0}
 .hemifig figcaption{color:var(--muted);font-size:13px;margin-top:10px;max-width:66ch}
 .halls{display:grid;gap:32px}
@@ -601,7 +611,15 @@ figcaption{color:var(--muted);font-size:13px;line-height:1.55;margin-top:10px;ma
 .key a{border:0;display:inline-flex;align-items:center;min-height:44px}
 .key a:hover{color:currentColor;text-decoration:underline}
 .key b{font-variant-numeric:tabular-nums;font-weight:600}
-.key .sw{width:12px;height:12px;border-radius:3px;background:currentColor;flex:none}
+.key .sw{width:15px;height:15px;flex:none;overflow:visible}
+/* The plain colour chip: a bench, whose identity is the logo and the name next
+   to it. Written as span.sw, not .sw, so it cannot repaint the SVG swatches. */
+.key span.sw{border-radius:3px;background:currentColor}
+/* The striped chip matches the striped segment in the bar. Specificity above
+   span.sw on purpose: an equal-specificity rule ordered before it is exactly
+   how the shape classes used to lose. */
+.key span.sw.sw-hatch{background:repeating-linear-gradient(45deg,
+  currentColor 0 3px,transparent 3px 6px)}
 /* --- retícula de bancadas / fichas ---------------------------------------- */
 .people{list-style:none;margin:0;padding:0;display:grid;gap:10px;
   grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
@@ -841,7 +859,9 @@ code{overflow-wrap:anywhere}
 .pager a,.pager span{min-height:44px;min-width:44px;display:inline-flex;align-items:center;
   justify-content:center;padding:0 10px;border:1px solid var(--line);border-radius:2px;
   font:600 13px/1 ui-monospace,Menlo,monospace}
-.pager .on{background:var(--accent);color:#fff;border-color:var(--accent)}
+/* White on the accent is 3.63:1 in dark mode — 13px text needs 4.5:1. The page
+   ground reads on both accents: 6.73:1 light, 5.22:1 dark. */
+.pager .on{background:var(--accent);color:var(--ground);border-color:var(--accent)}
 .facets{display:flex;flex-wrap:wrap;gap:8px}
 .facets a{border:1px solid var(--line);border-radius:2px;padding:10px 12px;min-height:44px;
   display:inline-flex;align-items:center;gap:8px;font-size:13.5px}
