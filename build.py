@@ -790,6 +790,18 @@ def render_bill(d, b):
     cts = d["bill_cttes"].get(bid, [])
     ct_links = ", ".join(f'<a href="{ctte_url(r, c)}">{esc(c["name"])}</a>'
                          for c in cts)
+    # The opening sentence said "en manos de una comisión" on 5,545 pages while
+    # naming that comisión twice further down. Say it where the reader lands --
+    # but keep `sentence` plain, since it also feeds the meta description, where
+    # markup would arrive escaped and visible.
+    sentence_html = esc(sentence)
+    if stage == "COM" and cts:
+        named_ct = ("Está en manos de " + ("la " if len(cts) == 1 else "")
+                    + ct_links)
+        sentence_html = esc(sentence).replace(
+            esc("Está en manos de una comisión"), named_ct, 1)
+        sentence = sentence.replace(
+            "una comisión", ", ".join(c["name"] for c in cts), 1)
     nodes = []
     for i, (k, label) in enumerate(track):
         # "Está en manos de una comisión" is not an address. When we know which
@@ -853,14 +865,24 @@ def render_bill(d, b):
     if primary:
         L = primary["leg"]
         if L:
+            # No photo, party or district survives for the 2021 members: the
+            # chamber sites were replaced at the handover. An <img src=""> is a
+            # broken-image box, not a placeholder -- omit it, and say plainly
+            # that the detail is gone rather than printing an empty label.
+            seat = (f'{esc(CHAMBER[L["chamber"]])} por {esc(L["district"])}'
+                    if L["district"] else
+                    f'{esc(CHAMBER[L["chamber"]])} &middot; el padrón de su '
+                    f'periodo ya no se publica')
             spon_html = (
                 f'<div class="who">'
-                f'<img loading="lazy" src="{esc(L["photo_url"] or "")}" alt="">'
-                f'<div><a class="nm" href="{leg_url(r, L["slug"])}">'
+                + (f'<img loading="lazy" src="{esc(L["photo_url"])}" alt="">'
+                   if L["photo_url"] else "")
+                + f'<div><a class="nm" href="{leg_url(r, L["slug"])}">'
                 f'{esc(nice_name(L["full_name"]))}</a>'
-                f'<div class="sm mut">{esc(CHAMBER[L["chamber"]])} por '
-                f'{esc(L["district"] or "circunscripción no registrada")}</div>'
-                f'<div style="margin-top:8px">{party_chip(L["party"])}</div></div></div>')
+                f'<div class="sm mut">{seat}</div>'
+                + (f'<div style="margin-top:8px">{party_chip(L["party"])}</div>'
+                   if L["party"] else "")
+                + '</div></div>')
         else:
             spon_html = (
                 f'<div class="who"><div><span class="nm">'
@@ -882,15 +904,17 @@ def render_bill(d, b):
                              f'<span class="dotmark"></span></span></li>')
             else:
                 items.append(f'<li>{esc(nice_name(s["name_raw"]))}</li>')
+        # The 2021 members have no bench on record, so keying the split on a
+        # NULL party printed a leading blank where a name should be.
         split = {}
         for s in named:
-            split[s["leg"]["party"]] = split.get(s["leg"]["party"], 0) + 1
-        head = ""
-        if split:
-            head = ("<p class='sm mut'>" + " · ".join(
-                f"{esc(k)} {v}" for k, v in sorted(split.items(), key=lambda x: -x[1]))
-                + f" · {len(named)} de {len(sponsors)} autores identificados en el "
-                  "padrón vigente.</p>")
+            if s["leg"]["party"]:
+                split[s["leg"]["party"]] = split.get(s["leg"]["party"], 0) + 1
+        head = ("<p class='sm mut'>" + "".join(
+            f"{esc(k)} {v} &middot; "
+            for k, v in sorted(split.items(), key=lambda x: -x[1]))
+            + f"{len(named)} de {len(sponsors)} autores identificados en el "
+              "padrón.</p>") if named else ""
         co_html = (f'<section><h2>Coautores ({len(co)})</h2>{head}'
                    f'<ul class="roll">{"".join(items)}</ul></section>')
 
@@ -959,7 +983,7 @@ def render_bill(d, b):
 <span class="eyebrow">Proyecto de ley {esc(b["code"])}</span>
 <h1>{esc(head)}</h1>
 <p class="lede"><span class="chip {cls}">{esc(b["status"] or "sin estado")}</span>
-&nbsp;{esc(sentence)}</p>
+&nbsp;{sentence_html}</p>
 <section><h2>Trámite legislativo</h2>{track_html}</section>
 {nexts_html}
 {summ}
@@ -1026,9 +1050,14 @@ def render_leg(d, L, base):
                        reverse=True)
     # Twenty-two of the 190 also sat in the 2021-2026 unicameral Congress and
     # their old bills match by name. Counting those as work of this period
-    # would put a senator at 530 against a chamber median of 0.
-    mine = [x for x in all_bills if d["bill_by_id"][x[0]]["per_par"] >= 2026]
-    past = [x for x in all_bills if d["bill_by_id"][x[0]]["per_par"] < 2026]
+    # would put a senator at 530 against a chamber median of 0. But "this
+    # period" is the member's own, not always 2026: hardcoding that printed
+    # "0 proyectos firmados" on all 140 unicameral pages, directly above the
+    # list of the bills they had in fact signed.
+    mine = [x for x in all_bills
+            if d["bill_by_id"][x[0]]["per_par"] == L["per_par"]]
+    past = [x for x in all_bills
+            if d["bill_by_id"][x[0]]["per_par"] != L["per_par"]]
     prim = [x for x in mine if (x[1] or 0) == 0]
     mots = d["leg_motions"].get(slug, [])
     vts = d["leg_votes"].get(slug, [])
@@ -1979,7 +2008,7 @@ def main():
     for L in d["legs"]:
         c = L["chamber"]
         mine = [x for x in d["leg_bills"].get(L["slug"], [])
-                if d["bill_by_id"][x[0]]["per_par"] >= 2026]
+                if d["bill_by_id"][x[0]]["per_par"] == L["per_par"]]
         base["bills"].setdefault(c, []).append(len(mine))
         base["prim"].setdefault(c, []).append(sum(1 for x in mine if (x[1] or 0) == 0))
         base["mots"].setdefault(c, []).append(len(d["leg_motions"].get(L["slug"], [])))
