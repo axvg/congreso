@@ -6,6 +6,7 @@ Every page is a file on disk, so the site deploys anywhere and needs no runtime.
 """
 import csv
 import datetime as dt
+import difflib
 import functools
 import html
 import io
@@ -47,8 +48,9 @@ STATUS = {
          "Estudio en comisión, que puede pedir opinión a ministerios y gremios."]),
     "EN COMISIÓN": ("COM",
         "Está en manos de una comisión, que debe estudiarlo y emitir un "
-        "dictamen. La mayoría de proyectos se quedan aquí hasta que termina el "
-        "periodo y son archivados.",
+        "dictamen. Es la etapa en la que más proyectos se detienen: abajo están "
+        "las cifras del periodo anterior, cuántos salieron y cuántos se "
+        "quedaron.",
         ["Dictamen de la comisión (favorable, favorable sustitutorio o de archivo).",
          "Si hay dictamen favorable, pasa al Orden del Día.",
          "Si la comisión no dictamina, el proyecto caduca al final del periodo."]),
@@ -517,10 +519,15 @@ TOGGLE = ("<button onclick=\"var d=document.documentElement,"
 
 
 def shell(title, body, depth=0, desc=""):
+    """Every page. `noindex` is deliberate and site-wide: this deploys public
+    before it is finished, and a half-checked copy of the Congress's record has
+    no business in a search index. Removing it is a one-line decision, taken
+    once, here."""
     r = "../" * depth
     return f"""<!doctype html><html lang="es"><meta charset="utf-8">
 <title>{esc(title)}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
 <meta name="description" content="{esc(desc)}">
 <style>{CSS}</style>{THEME}
 <nav class="top"><a class="brand" href="{r}index.html">Hemiciclo</a>
@@ -528,9 +535,14 @@ def shell(title, body, depth=0, desc=""):
 <a href="{r}parlamentarios.html">Parlamentarios</a>
 <a href="{r}comisiones.html">Comisiones</a>
 <a href="{r}votaciones.html">Votaciones</a>
+<a href="{r}asistencia.html">Asistencia</a>
 <a href="{r}mociones.html">Mociones</a>
 <span class="sp"></span>{TOGGLE}</nav>
-<div class="wrap">{body}</div></html>"""
+<div class="wrap">{body}
+<footer class="prov"><a href="{r}acerca.html">Acerca de este sitio: quién lo
+hace, de dónde sale cada dato y cómo pedir una corrección</a> &middot;
+Registro independiente construido con datos publicados por el Congreso de la
+República del Perú. <b>Este sitio no es el Congreso.</b></footer></div></html>"""
 
 
 GP_CLASS = {}
@@ -590,6 +602,58 @@ def subject_bill(d, v):
     return None
 
 
+def ctte_key(name):
+    """Committee title reduced to what identifies it. The oficio blocks write
+    the same body as «Comisión de Asuntos de X» or «Comisión de X» where the
+    cuadro says «X», and those decorations are the whole difference."""
+    s = unicodedata.normalize("NFD", name or "")
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+    s = re.sub(r"^comisi[oó]n (de|en) ", "", s)
+    s = re.sub(r"^(en )?asuntos (de|en) ", "", s)
+    return " ".join(re.sub(r"[^a-z ]", " ", s).split())
+
+
+def ctte_aliases(con, cttes):
+    """Five ids in `committee` are not committees. They were created from oficio
+    amendment blocks that name an existing body with a longer title —
+    «Comisión de Procedimientos Especiales» for «Procedimientos Especiales» —
+    and they inflated the Senate list from 11 to 16 while making a member's
+    «cambios posteriores» point at a committee they are already sitting on.
+
+    A phantom is recognisable without a hardcoded id list: it carries amendment
+    rows and no roster at all. It is folded into the closest real committee of
+    the same chamber and periodo by title similarity. Nothing is written to the
+    DB; the ids stay there and this runs again on the next build.
+
+    ponytail: SequenceMatcher over a normalised title, cutoff 0.6 — the worst
+    real pair here scores 0.67 and the best wrong one 0.4. If the Congress ever
+    files two committees whose names differ by one word, this needs the oficio's
+    own text instead of the title.
+    """
+    counts = {}
+    for r in con.execute("SELECT committee_id, amendment, count(*) n "
+                         "FROM committee_member GROUP BY 1, 2"):
+        counts.setdefault(r["committee_id"], {})[r["amendment"]] = r["n"]
+    seated = [c for c in cttes.values() if counts.get(c["id"], {}).get(0)]
+    phantom = [c for c in cttes.values()
+               if counts.get(c["id"]) and not counts[c["id"]].get(0)]
+    alias, names = {}, {}
+    for a in phantom:
+        ka = ctte_key(a["name"])
+        best, score = None, 0.0
+        for c in seated:
+            if (c["per_par"], c["chamber"]) != (a["per_par"], a["chamber"]):
+                continue
+            s = difflib.SequenceMatcher(None, ka, ctte_key(c["name"])).ratio()
+            if s > score:
+                best, score = c, s
+        if best and score >= 0.6:
+            alias[a["id"]] = best
+            names[a["id"]] = a["name"]
+            cttes.pop(a["id"])
+    return alias, names
+
+
 def load(con):
     d = {}
     d["legs"] = [dict(r) for r in con.execute(
@@ -614,9 +678,10 @@ def load(con):
     # they said before.
     d["cttes"] = {r["id"]: dict(r) for r in con.execute(
         "SELECT * FROM committee ORDER BY name")}
+    d["alias"], d["alias_name"] = ctte_aliases(con, d["cttes"])
     d["bill_cttes"], d["ctte_bills"] = {}, {}
     for r in con.execute("SELECT * FROM bill_committee"):
-        c = d["cttes"].get(r["committee_id"])
+        c = d["cttes"].get(r["committee_id"]) or d["alias"].get(r["committee_id"])
         if c:
             d["bill_cttes"].setdefault(r["bill_id"], []).append(c)
             d["ctte_bills"].setdefault(c["id"], []).append(r["bill_id"])
@@ -627,9 +692,16 @@ def load(con):
     d["ctte_mem"], d["leg_cttes"] = {}, {}
     for r in con.execute("SELECT * FROM committee_member ORDER BY name_raw"):
         c = d["cttes"].get(r["committee_id"])
-        if not c:
-            continue
         m = dict(r)
+        if not c:
+            c = d["alias"].get(r["committee_id"])
+            if not c:
+                continue
+            # A row filed under an alias title is, by construction, a change to
+            # the real committee: it only ever appears in an oficio block.
+            m["amendment"] = 1
+            m["alias_name"] = d["alias_name"][r["committee_id"]]
+        m["committee_id"] = c["id"]
         m["leg"] = (d["by_id"].get(m["legislator_id"])
                     or d["by_last"].get(("S", norm(m["name_raw"]))))
         d["ctte_mem"].setdefault(c["id"], []).append(m)
@@ -668,6 +740,59 @@ def load(con):
                         or d["by_name"].get(nm)
                         or d["by_last"].get((ch, nm))
                         or d["by_last"].get((ch, norm(x["name_raw"].split(",")[0]))))
+
+    # Who chaired each sitting. Two independent signals, because being in the
+    # chair is the difference between "did not vote" and "was not there", and
+    # publishing the wrong one about a named person is a libel, not a bug.
+    d["presided"] = set()
+    for v in d["votes"]:
+        for x in d["vrows"].get(v["id"], []):
+            if x["position"] == "PRESIDENCIA" and x["leg"]:
+                d["presided"].add((v["chamber"], v["held_on"], x["leg"]["slug"]))
+        who = (v["session"] or "").split(":", 1)[-1].strip() if v["session"] else ""
+        pl = d["by_last"].get((v["chamber"], norm(who.split(",")[0]))) if who else None
+        if pl:
+            d["presided"].add((v["chamber"], v["held_on"], pl["slug"]))
+
+    # Attendance: 1 340 rows, one per member per taking. A session takes several,
+    # so the taking (chamber, date, hora) is the unit, not the day.
+    d["takings"], d["leg_att"] = {}, {}
+    for r in con.execute("SELECT * FROM attendance"):
+        x = dict(r)
+        x["leg"] = (d["by_id"].get(x["legislator_id"])
+                    or d["by_name"].get(norm(x["name_raw"])))
+        k = (x["chamber"], x["held_on"], x["taken_at"])
+        s = d["takings"].get(k)
+        if not s:
+            s = d["takings"][k] = {
+                "chamber": x["chamber"], "held_on": x["held_on"],
+                "taken_at": x["taken_at"], "rows": [],
+                "source_url": x["source_url"], "sort": hour24(x["taken_at"]),
+                "slug": f'{x["chamber"].lower()}-{x["held_on"]}-'
+                        f'{slugify(x["taken_at"])}'}
+        s["rows"].append(x)
+        if x["leg"]:
+            d["leg_att"].setdefault(x["leg"]["slug"], []).append((s, x))
+    d["sesiones"] = sorted(d["takings"].values(),
+                           key=lambda s: (s["held_on"], s["sort"]), reverse=True)
+    for s in d["takings"].values():
+        s["rows"].sort(key=lambda x: x["name_raw"])
+        s["tally"] = att_tally(d, s, s["rows"])
+
+    # The same person sat in both Congresses under two ids and two pages that
+    # never referenced each other. Normalised name is the only bridge, same rule
+    # as ingest.legislators.norm.
+    d["twin"] = {}
+    byname = {}
+    for L in d["legs"]:
+        byname.setdefault(norm(L["full_name"]), []).append(L)
+    for group in byname.values():
+        if len(group) > 1:
+            for L in group:
+                other = [o for o in group if o["id"] != L["id"]]
+                d["twin"][L["slug"]] = sorted(other, key=lambda o: -o["per_par"])
+
+    d["rates"] = base_rates(d)
 
     # reverse indexes
     d["leg_bills"], d["leg_motions"], d["leg_votes"] = {}, {}, {}

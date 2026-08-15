@@ -51,6 +51,9 @@ def textos(con, limit=None, workers=4):
             try:
                 bid, doc, path = fut.result()
                 body, pages = texts.extract(path)
+                # ponytail: the text is what we keep; 14,878 PDFs is ~7 GB of
+                # files we have already read and that are one public GET away.
+                path.unlink(missing_ok=True)
                 if len(body) < 200:
                     skip += 1
                     continue

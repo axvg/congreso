@@ -28,9 +28,15 @@ def _aes(plain: str) -> str:
 
 
 def enc(n) -> str:
-    """URL-safe ciphertext for an integer-valued path segment."""
+    """URL-safe ciphertext for an integer-valued path segment.
+
+    Each extra zero rerolls the ciphertext, and roughly a quarter of rolls carry
+    a `+` or `/`. Stopping at 8 tries left a handful of bills permanently
+    unreachable -- 13682 needs exactly the 8th. 24 makes a miss about one in
+    10^14; if it ever fires, the bill is genuinely unfetchable and should say so.
+    """
     s = str(n)
-    for pad in range(0, 8):
+    for pad in range(0, 24):
         c = _aes("0" * pad + s)
         if "+" not in c and "/" not in c:
             return c
