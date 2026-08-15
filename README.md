@@ -17,15 +17,29 @@ Python 3.12, no dependencies beyond `cryptography` (stdlib otherwise) and
 python3 -m ingest.run members      # 130 + 60 from the chamber WordPress APIs
 python3 -m ingest.run bills        # bill lists, both periods
 python3 -m ingest.run expedientes  # dossiers: timeline, committees, documents
-python3 -m ingest.run votes        # roll-call PDFs + diario de debates
+python3 -m ingest.run votes        # roll-call PDFs + diario de debates + attendance
+python3 -m ingest.run textos       # the filed text of each bill, from its PDF
 python3 -m ingest.run status       # counts and coverage
 
-python3 build.py                   # -> site/, ~15k pages in 6s
+python3 build.py                   # -> site/, ~15k pages in ~5s
 python3 progress.py                # -> site/progress.html, the build board
 ```
 
+Committee rosters come from the diario de debates rather than any API:
+`python3 -c "from ingest import db,committees as c; c.ingest(db.connect(),'S',
+db.DB.parent/'pdf'/'PLO-2026-3-SENADO.pdf')"`.
+
 Each ingest module has a `demo()` self-check that hits the live sources:
-`python3 -m ingest.spley`, `python3 -m ingest.legislators`, and so on.
+`python3 -m ingest.spley`, `python3 -m ingest.legislators`, and so on. They are
+the test suite; `.github/workflows/actualizar.yml` runs all of them daily,
+re-ingests incrementally and deploys.
+
+The 2021-2026 roll-call backlog needs OCR, which is not installed:
+
+```
+sudo apt install -y tesseract-ocr tesseract-ocr-spa
+python3 -m ingest.ocr              # pilot over 5 actas; it measures, does not ingest
+```
 
 ## The measurable half
 
@@ -56,7 +70,7 @@ wrong vote row is worse than a missing one.
 | Roll calls, diarios | `GET /wp-json/wp/v2/media?per_page=100` on both chamber hosts |
 | Enacted law | `GET api.congreso.gob.pe/adlp-visor-service/ley/leyes?nroley1=&nroley2=` |
 
-Four things are not obvious and cost real time:
+Five things are not obvious and cost real time:
 
 1. **`codTipoParl` is mandatory from 2026 on.** Omit it and the bicameral
    periods return an empty list rather than an error — which reads exactly like
@@ -72,6 +86,16 @@ Four things are not obvious and cost real time:
 4. **In the nominal-vote layout the mark is the literal `P` in all three of the
    SI, NO and ABST columns.** Only its horizontal coordinate distinguishes a yes
    from a no, so the parser reads geometry, not text.
+5. **Two routes serve the same attached document and only one is open.**
+   `/archivo/uuid/{uuid}` answers `Token de captcha no proporcionado`; the
+   numeric-id route the viewer uses for inline rendering,
+   `/archivo/{btoa(id)}/pdf`, asks for nothing. Keep the id, not the uuid.
+
+The roll-call tallies published during a session are stamped `INFORMACIÓN
+PROVISIONAL · SIN LOS VOTOS ORALES`. The corrected result — including the votes
+the chair reads into the record afterwards — appears only in the diario de
+debates. Validating a provisional document against itself proves only that it is
+self-consistent, so `parsed=1` requires the diario where one exists.
 
 There is no shared id between the chamber websites and the bills API; the join
 is normalised names, 190/190 for the current period.
