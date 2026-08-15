@@ -94,10 +94,15 @@ def expedientes(con, limit=None, workers=6, redo=0):
     not shared across threads. Pass redo=1 to re-fetch everything, which is what
     you want after adding a field the dossier already carried.
     """
-    q = "SELECT id, per_par, ply_num, code, chamber FROM bill b "
-    if not int(redo):
-        q += ("WHERE NOT EXISTS (SELECT 1 FROM bill_action a WHERE a.bill_id=b.id) ")
-    q += "ORDER BY presented_on DESC"
+    # redo=0  bills with no tramite at all -- the daily incremental case.
+    # redo=1  bills whose stored tramite predates a field we now keep, detected
+    #         by the absence of doc_id. Re-running the whole corpus to collect a
+    #         column most of it already carries is an hour of somebody's server.
+    q = "SELECT id, per_par, ply_num, code, chamber FROM bill b WHERE NOT EXISTS "
+    q += ("(SELECT 1 FROM bill_action a WHERE a.bill_id=b.id AND a.doc_id IS NOT NULL)"
+          if int(redo) else
+          "(SELECT 1 FROM bill_action a WHERE a.bill_id=b.id)")
+    q += " ORDER BY presented_on DESC"
     if limit:
         q += f" LIMIT {int(limit)}"
     rows = con.execute(q).fetchall()

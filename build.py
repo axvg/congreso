@@ -471,12 +471,15 @@ a.chip{min-height:44px;display:inline-flex;align-items:center}
 .sign a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 .who a.nm{min-height:44px;display:inline-flex;align-items:center}
 .why a,.kv dd a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
+/* A link inside running prose is still a tap target on a phone. */
+p a,.lede a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 .gloss{border:1px solid var(--line);border-radius:2px;margin:0 0 14px;background:var(--raised)}
 .gloss summary{cursor:pointer;padding:12px 16px;min-height:44px;display:flex;
   align-items:center;font:600 13px/1.4 system-ui,sans-serif}
 .gloss dl{padding:0 16px 16px;margin:0}
 .gloss dd{font-size:13.5px;color:var(--muted)}
 .prov b{color:var(--ink)}
+.prov,.prov a{overflow-wrap:anywhere}   /* PDF filenames are 60 characters long */
 .prov code{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
 code{overflow-wrap:anywhere}
 .pager{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
