@@ -16,6 +16,7 @@ import datetime as dt
 import re
 import subprocess
 import time
+import urllib.request
 
 from . import api, db
 
@@ -49,30 +50,31 @@ def pdf_path(doc_id):
 MAX_BYTES = 30 * 1024 * 1024
 
 
-def size_of(url):
-    """Content-Length without pulling the body."""
-    try:
-        h = {}
-        api.fetch(url, headers={"Range": "bytes=0-0"}, out=h, tries=2, timeout=45)
-        rng = h.get("Content-Range", "")
-        return int(rng.rsplit("/", 1)[1]) if "/" in rng else None
-    except Exception:  # noqa: BLE001 - unknown size is not fatal, just download it
-        return None
-
-
 def fetch_pdf(doc_id, url):
-    """Download once and keep it; the documents are immutable after filing."""
+    """Download once, capped, and keep it; documents are immutable after filing.
+
+    There is no cheap way to ask the size first: HEAD 404s and a Range request is
+    answered with the whole file, so "check the size, then download" cost two
+    full transfers of every document -- 37 seconds each on the 89 MB one. Read it
+    in chunks and stop once it is clearly a scan rather than a text.
+    """
     p = pdf_path(doc_id)
     if p.exists() and p.stat().st_size > 0:
         return p
-    n = size_of(url)
-    if n and n > MAX_BYTES:
-        raise TooBig(f"{n // 1024 // 1024} MB")
-    raw = api.fetch(url, timeout=180)
-    if not raw.startswith(b"%PDF"):
-        raise ValueError(f"not a pdf: {raw[:80]!r}")
+    req = urllib.request.Request(url, headers={"User-Agent": api.UA})
+    buf = bytearray()
+    with urllib.request.urlopen(req, timeout=240) as r:
+        while True:
+            chunk = r.read(1 << 18)
+            if not chunk:
+                break
+            buf += chunk
+            if len(buf) > MAX_BYTES:
+                raise TooBig(f"más de {MAX_BYTES // 1024 // 1024} MB")
+    if not buf.startswith(b"%PDF"):
+        raise ValueError(f"not a pdf: {bytes(buf[:80])!r}")
     PDF_DIR.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(raw)
+    p.write_bytes(buf)
     return p
 
 
