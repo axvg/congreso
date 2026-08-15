@@ -287,6 +287,10 @@ def vote_url(r, v):
     return f'{r}votacion/{v["slug"]}.html'
 
 
+def ctte_url(r, c):
+    return f'{r}comision/{c["slug"]}.html'
+
+
 def write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -416,7 +420,7 @@ section{margin:34px 0}
   letter-spacing:.06em;text-transform:uppercase}
 .tl .what{font-weight:600}
 .tl .why{color:var(--muted);font-size:13.5px;max-width:62ch;margin-top:3px}
-.tl .doc{font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;
+.doc{font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;
   text-transform:uppercase;color:var(--accent);display:inline-block;margin-top:4px;
   padding:14px 0;min-height:44px}
 .kv{margin:0;display:grid;gap:12px 24px}
@@ -463,6 +467,7 @@ td a{display:inline-block;min-height:44px;line-height:24px;padding:10px 0}
 a.chip{min-height:44px;display:inline-flex;align-items:center}
 .sign a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 .who a.nm{min-height:44px;display:inline-flex;align-items:center}
+.why a,.kv dd a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 .gloss{border:1px solid var(--line);border-radius:2px;margin:0 0 14px;background:var(--raised)}
 .gloss summary{cursor:pointer;padding:12px 16px;min-height:44px;display:flex;
   align-items:center;font:600 13px/1.4 system-ui,sans-serif}
@@ -521,6 +526,7 @@ def shell(title, body, depth=0, desc=""):
 <nav class="top"><a class="brand" href="{r}index.html">Hemiciclo</a>
 <a href="{r}proyectos.html">Proyectos</a>
 <a href="{r}parlamentarios.html">Parlamentarios</a>
+<a href="{r}comisiones.html">Comisiones</a>
 <a href="{r}votaciones.html">Votaciones</a>
 <a href="{r}mociones.html">Mociones</a>
 <span class="sp"></span>{TOGGLE}</nav>
@@ -614,6 +620,21 @@ def load(con):
         if c:
             d["bill_cttes"].setdefault(r["bill_id"], []).append(c)
             d["ctte_bills"].setdefault(c["id"], []).append(r["bill_id"])
+    # Rosters exist for the Senate only, and only because the session that
+    # approved them was minuted. `amendment=1` is a change a bench filed later
+    # by oficio over its own designation, NOT a thirteenth seat: it is kept
+    # apart here so nothing downstream can sum it into a committee.
+    d["ctte_mem"], d["leg_cttes"] = {}, {}
+    for r in con.execute("SELECT * FROM committee_member ORDER BY name_raw"):
+        c = d["cttes"].get(r["committee_id"])
+        if not c:
+            continue
+        m = dict(r)
+        m["leg"] = (d["by_id"].get(m["legislator_id"])
+                    or d["by_last"].get(("S", norm(m["name_raw"]))))
+        d["ctte_mem"].setdefault(c["id"], []).append(m)
+        if m["leg"]:
+            d["leg_cttes"].setdefault(m["leg"]["slug"], []).append(m)
     d["motions"] = [dict(r) for r in con.execute(
         "SELECT * FROM motion ORDER BY presented_on DESC, num DESC")]
     d["signers"] = {}
@@ -767,12 +788,19 @@ def render_bill(d, b):
 
     # Naming the committee turns "en manos de una comisión" into an address.
     cts = d["bill_cttes"].get(bid, [])
-    ct_links = ", ".join(f'<a href="{r}comision/{esc(c["slug"])}.html">'
-                         f'{esc(c["name"])}</a>' for c in cts)
+    ct_links = ", ".join(f'<a href="{ctte_url(r, c)}">{esc(c["name"])}</a>'
+                         for c in cts)
     nodes = []
     for i, (k, label) in enumerate(track):
+        # "Está en manos de una comisión" is not an address. When we know which
+        # comisión, the node says so and links to it.
+        why = esc(STAGE_BLURB[k])
         if k == "COM" and cts:
             label = " · ".join(c["name"] for c in cts)
+            why = (f'En manos de {ct_links}, que debe estudiarlo y emitir dictamen.'
+                   if len(cts) == 1 else
+                   f'Derivado a {len(cts)} comisiones: {ct_links}. Cada una puede '
+                   f'emitir su propio dictamen.')
         if stage == "DEAD" and i == ci:
             cls, tag = "stop", "Detenido aquí"
         elif i < ci or (i == ci == len(track) - 1 and stage == "LEY"):
@@ -786,7 +814,7 @@ def render_bill(d, b):
             f'<li class="{cls}"><span class="dot"></span>'
             f'<span class="when">{tag}{" · " + fecha(w) if w else ""}</span>'
             f'<span class="name">{esc(label)}</span>'
-            f'<span class="why">{esc(STAGE_BLURB[k])}</span></li>')
+            f'<span class="why">{why}</span></li>')
     track_html = f'<ol class="track">{"".join(nodes)}</ol>'
 
     # timeline: every row annotated. Without the dossier we still know two
@@ -1113,6 +1141,49 @@ def render_leg(d, L, base):
                  if any(p in ("SI", "NO", "ABST") for _, p in vts) else "")
               + "</section>")
 
+    # Comisiones. The block GovTrack has and we did not: where this person
+    # actually works. Senate only, because only the Senate's cuadros have been
+    # published in a diario — a deputy gets the reason, not a blank card.
+    mem = d["leg_cttes"].get(slug, [])
+    firm = [m for m in mem if not m["amendment"]]
+    chg = [m for m in mem if m["amendment"]]
+    ct_html = ""
+    if firm or chg:
+        def ct_li(m):
+            c = d["cttes"][m["committee_id"]]
+            return (f'<li><a href="{ctte_url(r, c)}">{esc(c["name"])}</a> '
+                    f'<span class="rank">{esc(m["role"])}</span></li>')
+        order = {"titular": 0, "suplente": 1}
+        firm.sort(key=lambda m: (order.get(m["role"], 2),
+                                 d["cttes"][m["committee_id"]]["name"]))
+        ntit = sum(1 for m in firm if m["role"] == "titular")
+        ct_html = (
+            f'<section><h2>Comisiones ({len(firm)})</h2>'
+            f'<ul class="roll">{"".join(ct_li(m) for m in firm)}</ul>'
+            f'<p class="sm mut">Titular en {ntit}'
+            + (f' y suplente en {len(firm) - ntit}' if len(firm) > ntit else "")
+            + '. El titular ocupa la plaza; el suplente vota y firma el dictamen '
+              'cuando el titular falta.</p>'
+            + (f'<h3 style="margin-top:18px">Cambios posteriores ({len(chg)})</h3>'
+               f'<p class="sm mut">Designaciones que su bancada modificó después '
+               f'por oficio. No se suman a las de arriba: sustituyen a otra '
+               f'persona en esa comisión.</p>'
+               f'<ul class="roll">{"".join(ct_li(m) for m in chg)}</ul>'
+               if chg else "")
+            + '<p class="sm mut">Fuente: Diario de los Debates del Senado. '
+              'Ninguna cámara publica esta composición como dato.</p></section>')
+    elif L["chamber"] == "D":
+        ct_html = ('<section><h2>Comisiones</h2><p>La Cámara de Diputados no ha '
+                   'publicado todavía el diario de la sesión en que aprobó sus '
+                   'cuadros de comisiones, que es la única fuente que existe: '
+                   'por eso no podemos decir en cuáles está. En cuanto lo '
+                   'publique, aparecerá aquí.</p></section>')
+    elif L["chamber"] == "S":
+        ct_html = ('<section><h2>Comisiones</h2><p>No figura en ningún cuadro de '
+                   'comisiones del diario en que el Senado los aprobó. Puede '
+                   'haber sido designado después, por oficio de su bancada, en '
+                   'un acta que aún no hemos leído.</p></section>')
+
     contact = []
     if L["email"]:
         contact.append(f'<div><dt>Correo</dt><dd><a href="mailto:{esc(L["email"])}">'
@@ -1169,6 +1240,7 @@ def render_leg(d, L, base):
 {len(base["bills"][L["chamber"]])} integrantes de la cámara, no sobre una
 muestra. El periodo {per} corre hasta el 26 de julio de {L["per_par"] + 5}; la
 próxima elección general es en abril de {L["per_par"] + 5}.</p></section>
+{ct_html}
 {contact_html}
 {bio}
 {bl}
@@ -1753,6 +1825,107 @@ def vote_csv(d, v):
     return buf.getvalue()
 
 
+# ---------------------------------------------------------------- comisiones
+
+# Neither cámara publishes who sits on a committee: the portals list names and
+# nothing else. The rosters come from the Diario de los Debates of the session
+# where the Senate approved its cuadros, which we parse; `source_url` is our
+# local mirror of that PDF, so the public copy is rebuilt from its filename.
+DIARIO = "https://senado.congreso.gob.pe/wp-content/uploads/2026/08/"
+
+
+def diario_url(src):
+    # ponytail: one diario so far, so one upload folder. A second one needs the
+    # public URL stored at ingest time instead of reconstructed here.
+    return DIARIO + pathlib.PurePath(src or "").name
+
+
+def mem_li(r, m, tag=""):
+    """One roster line: person (linked when they are in the padrón) + bancada."""
+    who = (f'<a href="{leg_url(r, m["leg"]["slug"])}">'
+           f'{esc(nice_name(m["leg"]["full_name"]))}</a>' if m["leg"]
+           else esc(nice_name(m["name_raw"])))
+    bench = m["bench"] or (m["leg"] or {}).get("party")
+    tag_html = f' <span class="rank">{esc(tag)}</span>' if tag else ""
+    return f'<li>{who} {party_chip(bench, r)}{tag_html}</li>'
+
+
+def roster(d, c, r="../"):
+    """Composición of one committee, server-rendered.
+
+    Amendment rows are shown apart and never counted: an oficio replaces a
+    designation the bench already made, so folding it in would seat thirteen
+    people in a committee of twelve.
+    """
+    ms = d["ctte_mem"].get(c["id"], [])
+    if not ms:
+        return ""
+    tit = [m for m in ms if m["role"] == "titular" and not m["amendment"]]
+    sup = [m for m in ms if m["role"] == "suplente" and not m["amendment"]]
+    amd = [m for m in ms if m["amendment"]]
+    src = diario_url(ms[0]["source_url"])
+    out = [f'<section><h2>Composición ({len(tit)} titulares'
+           + (f", {len(sup)} suplentes" if sup else "") + ")</h2>"
+           if tit or sup else
+           f'<section><h2>Cambios de composición ({len(amd)})</h2>'
+           f'<p>Bajo este nombre, el diario solo trae cambios de designación '
+           f'presentados por oficio; el cuadro completo no aparece.</p>']
+    if c["per_par"] != 2026:
+        # ponytail: the ingester keyed this roster onto a committee of the same
+        # name from the 2021-2026 Congress. Saying so is cheaper and more honest
+        # than silently re-parenting rows here.
+        out.append('<div class="note">Este cuadro es el que aprobó el Senado '
+                   '2026-2031. Los proyectos de más abajo son del Congreso '
+                   'unicameral 2021-2026, que tuvo una comisión con el mismo '
+                   'nombre.</div>')
+    if tit:
+        out.append(f'<h3>Titulares ({len(tit)})</h3><ul class="roll" id="titulares">'
+                   + "".join(mem_li(r, m) for m in tit) + "</ul>")
+    if sup:
+        out.append(f'<h3 style="margin-top:18px">Suplentes ({len(sup)})</h3>'
+                   f'<ul class="roll" id="suplentes">'
+                   + "".join(mem_li(r, m) for m in sup) + "</ul>")
+    if tit or sup:
+        out.append('<p class="sm mut" style="margin-top:14px">El titular ocupa la '
+                   'plaza; el suplente la ocupa cuando el titular falta, y en esa '
+                   'sesión vota y firma el dictamen en su lugar.</p>')
+    if amd:
+        out.append(
+            (f'<h3 style="margin-top:22px">Cambios posteriores ({len(amd)})</h3>'
+             f'<p class="sm mut">Una bancada puede cambiar a quien designó '
+             f'mediante un oficio leído en sesión. Estas {len(amd)} líneas '
+             f'sustituyen designaciones del cuadro de arriba: no son plazas '
+             f'adicionales y por eso no se suman al total.</p>' if tit or sup else
+             '<p class="sm mut">Cada línea sustituye a la persona que la bancada '
+             'había designado antes; no es una plaza adicional.</p>')
+            + f'<ul class="roll" id="cambios">'
+            + "".join(mem_li(r, m, tag=m["role"]) for m in amd)
+            + f'</ul><p><a class="doc" href="{esc(src)}">Oficio recogido en el '
+              f'Diario de los Debates ↗</a></p>')
+    out.append("</section>")
+    return "".join(out)
+
+
+def ctte_prov(d, c, today):
+    """Provenance lines for a committee page: bills and roster have different
+    sources, and the roster's is a PDF nobody publishes as data."""
+    ms = d["ctte_mem"].get(c["id"], [])
+    lines = [f'Comisiones asignadas a cada proyecto: expediente del proyecto en '
+             f'<code>{API}/proyecto-ley</code>.']
+    if ms:
+        src = diario_url(ms[0]["source_url"])
+        lines.append(
+            f'Composición: <a href="{esc(src)}">Diario de los Debates del Senado, '
+            f'sesión en que se aprobaron los cuadros de comisiones ↗</a>. '
+            f'Ninguna cámara publica la composición de sus comisiones como dato '
+            f'—no hay API, ni tabla, ni listado— así que estos {len(ms)} nombres '
+            f'están leídos del PDF de esa acta.')
+    if c["url"]:
+        lines.append(f'<a href="{esc(c["url"])}">Página oficial de la comisión ↗</a>.')
+    lines.append(f'Regenerado el {fecha(today)}.')
+    return lines
+
+
 # --------------------------------------------------------------- list pages
 
 def paginate(name, title, intro, rows_html, depth, per=PER_PAGE, prov_lines=()):
@@ -1880,27 +2053,93 @@ oficial traducido a lenguaje llano y el trámite que le falta a cada uno.</p>
     write(OUT / "proyectos.html", shell("Proyectos de ley", hub, 0))
     n["listado"] += 1
 
-    # ---- committees
+    # ---- committees: the roster (Senado only) and the bills sitting there.
+    # Half the committees have one and half the other, so each half of the page
+    # is either rendered or explained — never left as an empty card.
     for c in d["cttes"].values():
         bs = [d["bill_by_id"][b] for b in d["ctte_bills"].get(c["id"], [])
               if b in d["bill_by_id"]]
         bs.sort(key=lambda b: b["presented_on"] or "", reverse=True)
+        ms = d["ctte_mem"].get(c["id"], [])
+        per = f'{c["per_par"]}-{c["per_par"] + 5}' if c["per_par"] else ""
+        lede = ("Quiénes la integran, con su bancada, y qué proyectos de ley "
+                "tiene en las manos. "
+                if any(not m["amendment"] for m in ms) else
+                f'Comisión {DE[c["chamber"] or "C"]}. ')
+        lede += ("Una comisión que no dictamina archiva de hecho: al terminar el "
+                 "periodo, lo que sigue aquí caduca."
+                 if bs else
+                 "No tenemos ningún proyecto de ley derivado a esta comisión: "
+                 "las derivaciones que hemos cargado son las del Congreso "
+                 "2021-2026, y las de este periodo todavía no están en nuestra "
+                 "copia del registro de proyectos.")
         intro = (f'<div class="crumb"><a href="../index.html">Inicio</a> › '
-                 f'<a href="../proyectos.html">Proyectos de ley</a> › Comisiones'
-                 f'</div><span class="eyebrow">Comisión dictaminadora</span>'
-                 f'<h1>{esc(c["name"])}</h1><p class="lede">Los '
-                 f'{num(len(bs))} proyectos de ley que han pasado por esta '
-                 f'comisión. Una comisión que no dictamina archiva de hecho: '
-                 f'al terminar el periodo, lo que sigue aquí caduca.</p>')
-        for fn, htm in paginate(
-                c["slug"], c["name"], intro, [bill_row("../", b) for b in bs], 1,
-                prov_lines=[f'Comisiones asignadas por el Congreso, del '
-                            f'expediente de cada proyecto en <code>{API}</code>.',
-                            (f'<a href="{esc(c["url"])}">Página oficial de la '
-                             f'comisión ↗</a>.') if c["url"] else "",
-                            f'Regenerado el {fecha(today)}.']):
-            write(OUT / "comision" / fn, htm)
+                 f'<a href="../comisiones.html">Comisiones</a> › '
+                 f'{esc(CHAMBER[c["chamber"] or "C"])}</div>'
+                 f'<span class="eyebrow">Comisión · '
+                 f'{esc(CHAMBER[c["chamber"] or "C"])} {per}</span>'
+                 f'<h1>{esc(c["name"])}</h1><p class="lede">{lede}</p>'
+                 + roster(d, c))
+        if not ms:
+            intro += ('<div class="note">No publicamos la composición de esta '
+                      'comisión. La única fuente que existe para un cuadro de '
+                      'comisión es el Diario de los Debates de la sesión que lo '
+                      'aprueba, y el que hemos parseado es el del Senado '
+                      '2026-2031.</div>')
+        plines = ctte_prov(d, c, today)
+        if bs:
+            intro += (f'<h2 style="margin-top:34px">Proyectos de ley en esta '
+                      f'comisión ({num(len(bs))})</h2>')
+            for fn, htm in paginate(c["slug"], c["name"], intro,
+                                    [bill_row("../", b) for b in bs], 1,
+                                    prov_lines=plines):
+                write(OUT / "comision" / fn, htm)
+                n["listado"] += 1
+        else:
+            write(OUT / "comision" / f'{c["slug"]}.html',
+                  shell(c["name"], intro + prov(plines), 1,
+                        desc=f'Composición y proyectos de la {c["name"]}.'))
             n["listado"] += 1
+
+    # ---- committee index
+    crows = []
+    for c in sorted(d["cttes"].values(),
+                    key=lambda c: (-(c["per_par"] or 0), c["name"])):
+        ms = d["ctte_mem"].get(c["id"], [])
+        tit = sum(1 for m in ms if m["role"] == "titular" and not m["amendment"])
+        nb = len(d["ctte_bills"].get(c["id"], []))
+        meta = " · ".join(x for x in [
+            f'{esc(CHAMBER_SHORT[c["chamber"] or "C"])} '
+            f'{c["per_par"]}-{c["per_par"] + 5}' if c["per_par"] else "",
+            f"{tit} titulares" if tit else
+            "solo cambios por oficio" if ms else "composición no publicada",
+            f"{num(nb)} proyectos" if nb else "sin proyectos en nuestra copia",
+        ] if x)
+        crows.append(f'<li><span class="m">{meta}</span>'
+                     f'<a class="t" href="{ctte_url("", c)}">{esc(c["name"])}</a></li>')
+    withm = sum(1 for ms in d["ctte_mem"].values()
+                if any(not m["amendment"] for m in ms))
+    body = f"""<span class="eyebrow">Comisiones</span>
+<h1>{len(d["cttes"])} comisiones</h1>
+<p class="lede">La comisión es donde se decide casi todo: el 37 % de los proyectos
+de ley registrados está parado en una, y la que no dictamina archiva de hecho.
+De {withm} de ellas tenemos además el cuadro de miembros, con bancada y con la
+distinción entre titular y suplente.</p>
+<div class="note">Ninguna cámara publica la composición de sus comisiones como
+dato. Los cuadros que ve aquí están leídos del Diario de los Debates del Senado;
+la Cámara de Diputados todavía no ha publicado el diario de la sesión en que
+aprobó los suyos, de modo que de sus comisiones solo existe el nombre.</div>
+<div class="filters"><input id="q" type="search"
+ placeholder="Filtrar por nombre, cámara o periodo" aria-label="Filtrar comisiones"></div>
+<ul class="feed" id="ls">{"".join(crows)}</ul>
+{FILTER_JS}
+{prov([
+    f'Nombres y asignación de proyectos: expedientes en <code>{API}</code>.',
+    f'Composición: <a href="{DIARIO}PLO-2026-3-SENADO.pdf">Diario de los Debates '
+    f'del Senado ↗</a>, leído del PDF porque no existe en formato de datos.',
+    f'Regenerado el {fecha(today)}.'])}"""
+    write(OUT / "comisiones.html", shell("Comisiones", body, 0))
+    n["listado"] += 1
 
     # ---- legislators index
     rows = "".join(
@@ -2211,6 +2450,65 @@ def demo():
                              "provisional"), state
             if state != "firme":
                 assert "id=\"lectura\"" in t, f"{pg.name}: {state} but no disclosure"
+
+    # ---- comisiones. "EN COMISIÓN" is only an answer if the page names which
+    # one, so the bill page has to carry the name and the link, in the ficha and
+    # inside the stepper node.
+    row = con.execute(
+        "SELECT b.per_par, b.chamber, b.ply_num, c.name, c.slug FROM bill b "
+        "JOIN bill_committee bc ON bc.bill_id=b.id "
+        "JOIN committee c ON c.id=bc.committee_id "
+        "WHERE b.status LIKE 'EN COMISI%' LIMIT 1").fetchone()
+    if row:
+        t = (OUT / "proyecto" / str(row["per_par"]) / (row["chamber"] or "C")
+             / f'{row["ply_num"]}.html').read_text()
+        assert row["name"] in t, "bill in committee does not name it"
+        node = t.split('class="track"')[1].split("</ol>")[0]
+        assert f'comision/{row["slug"]}.html' in node, \
+            "the stepper node does not link the committee holding the bill"
+
+    # Every ordinary committee of this Senate seats exactly twelve titulares. A
+    # page showing anything else means a join went wrong -- or that an oficio
+    # amendment was counted as a thirteenth member, which it never is.
+    ord12 = con.execute(
+        "SELECT c.slug, count(*) n FROM committee_member m "
+        "JOIN committee c ON c.id=m.committee_id "
+        "WHERE m.role='titular' AND m.amendment=0 GROUP BY 1 HAVING n=12").fetchall()
+    assert len(ord12) >= 8, f"only {len(ord12)} committees with 12 titulares"
+    for c in ord12:
+        t = (OUT / "comision" / f'{c["slug"]}.html').read_text()
+        lst = t.split('id="titulares"')[1].split("</ul>")[0]
+        assert lst.count("<li") == 12, \
+            f'{c["slug"]}: {lst.count("<li")} titulares en la página, 12 en la base'
+        amd = con.execute("SELECT count(*) FROM committee_member m JOIN committee c "
+                          "ON c.id=m.committee_id WHERE c.slug=? AND m.amendment=1",
+                          (c["slug"],)).fetchone()[0]
+        if amd:
+            assert "Cambios posteriores" in t, f'{c["slug"]}: amendment rows hidden'
+
+    # A senator's page must list the committees they sit on, linked.
+    sen = con.execute(
+        "SELECT l.slug, count(*) n FROM committee_member m "
+        "JOIN legislator l ON l.id=m.legislator_id WHERE m.amendment=0 "
+        "GROUP BY 1 ORDER BY n DESC LIMIT 1").fetchone()
+    t = (OUT / "parlamentario" / f'{sen["slug"]}.html').read_text()
+    blk = t.split("<h2>Comisiones")[1].split("</section>")[0]
+    assert blk.count("../comision/") >= sen["n"], \
+        f'{sen["slug"]}: {blk.count("../comision/")} enlaces para {sen["n"]} comisiones'
+    assert "titular" in blk or "suplente" in blk, "role missing on legislator page"
+
+    # Diputados have no published cuadros: their pages must say why, not render
+    # an empty card. Same rule for a committee with no bills.
+    dip = con.execute("SELECT slug FROM legislator WHERE chamber='D' LIMIT 1").fetchone()
+    t = (OUT / "parlamentario" / f'{dip["slug"]}.html').read_text()
+    blk = t.split("<h2>Comisiones")[1].split("</section>")[0]
+    assert "Cámara de Diputados no ha publicado" in blk, "deputy left without a reason"
+    assert "<ul" not in blk and "../comision/" not in blk, "empty committee card"
+    for p in (OUT / "comision").glob("*.html"):
+        t = p.read_text()
+        assert '<ul class="feed" id="ls"></ul>' not in t, f"{p.name}: empty bill list"
+        assert '<ul class="roll" id="titulares"></ul>' not in t, f"{p.name}: empty roster"
+    assert (OUT / "comisiones.html").exists()
 
     # 2021 bills must reach people once the old roster lands; until then this
     # asserts the graph exists wherever the DB can support it.

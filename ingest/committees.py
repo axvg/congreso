@@ -189,16 +189,22 @@ def ingest(con, chamber, pdf):
         people[norm(r["last_name"] or r["full_name"])] = r["id"]
 
     rosters = parse(text(pdf), frozenset(people))
-    known = {r["slug"]: r["id"] for r in con.execute("SELECT id, slug FROM committee")}
+    # Scope the lookup by chamber and period: committee names repeat across
+    # congresses ("Inteligencia" exists in both), and matching on the slug alone
+    # hung this Senate's roster off a 2021 unicameral committee.
+    known = {(r["slug"], r["chamber"], r["per_par"]): r["id"]
+             for r in con.execute(
+                 "SELECT id, slug, chamber, per_par FROM committee")}
     nxt = (con.execute("SELECT coalesce(max(id),0) FROM committee").fetchone()[0]
            or 0) + 1
     nc = nm = unmatched = 0
     for name, members in rosters.items():
         slug = slugify(name)
-        cid = known.get(slug)
+        key = (slug, chamber, 2026)
+        cid = known.get(key)
         if cid is None:
             cid = nxt = max(nxt, 10_000) + 1
-            known[slug] = cid
+            known[key] = cid
             db.upsert(con, "committee", {
                 "id": cid, "per_par": 2026, "chamber": chamber,
                 "name": name, "slug": slug})
