@@ -1126,6 +1126,42 @@ a.chip{min-height:44px;display:inline-flex;align-items:center}
   background:var(--raised);font-size:13.5px}
 .roll.signers li .pl{color:var(--muted);padding-left:12px}
 .roll.signers li a:hover{border-color:currentColor;color:currentColor}
+/* «y 13 más» era un callejón sin salida: decía cuántos faltaban y no quiénes.
+   Son 233 firmas en todo el registro, así que las que no caben van en la propia
+   página y sólo se muestran al apuntar. `focus-within` con el disparador
+   tabulable es lo que lo hace funcionar con teclado y con un dedo. */
+.more{position:relative}
+.more>.pl{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
+.mpop{display:none;position:absolute;left:0;top:calc(100% + 4px);z-index:9;
+  width:min(300px,84vw);max-height:280px;overflow-y:auto;padding:8px 10px;
+  background:var(--raised);border:1px solid var(--line);border-radius:6px;
+  box-shadow:0 6px 22px rgba(0,0,0,.22)}
+.more:hover .mpop,.more:focus-within .mpop{display:block}
+.mpop ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.mpop li{display:flex;align-items:center;gap:7px;min-width:0;
+  font:400 12.5px/1.3 system-ui,sans-serif;color:var(--ink)}
+.mpop li a{color:var(--ink);text-decoration:none;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.mpop li a:hover{color:var(--accent)}
+/* Mesa directiva: tres cargos, tres logotipos, tres nombres. El cargo va en
+   versalitas a la izquierda porque lo que se compara entre comisiones es quién
+   preside, no la lista entera. */
+.mesa{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;
+  gap:4px 16px}
+.mesa li{display:flex;align-items:center;gap:6px;min-width:0;
+  font:400 12.5px/1.35 system-ui,sans-serif;color:var(--ink)}
+.mesa .ro{font:600 11px/1 ui-monospace,Menlo,monospace;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em}
+.mesa a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+.mesa a:hover{color:var(--accent);border-color:currentColor}
+.cttelist{list-style:none;margin:10px 0 0;padding:0;display:flex;
+  flex-direction:column}
+.cttelist>li{padding:10px 0;border-top:1px solid var(--line)}
+.cttelist>li:first-child{border-top:0}
+.cttelist>li>.t{display:block;font:600 13.5px/1.3 system-ui,sans-serif;
+  color:var(--ink);text-decoration:none}
+.cttelist>li>.t:hover{color:var(--accent)}
+.cttelist.tight>li{padding:6px 0}
 .why a,.kv dd a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 /* A link inside running prose is still a tap target on a phone. */
 p a,.lede a,.note a,figcaption a{display:inline-block;min-height:44px;line-height:22px;
@@ -1227,7 +1263,10 @@ code{overflow-wrap:anywhere}
 .feed li.r{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px;
   align-items:start;padding:8px 0 10px 13px;border-left:3px solid currentColor}
 .feed li.r>.chip{white-space:normal}
-@media(min-width:520px){.feed li.r{grid-template-columns:92px minmax(0,1fr)}}
+/* 104px, no 92: «INVESTIGACIÓN» en monospace de 11 px con 0.1em de espaciado
+   mide 100, y con `overflow-wrap:anywhere` la etiqueta salía partida en
+   «INVESTIGACI / ÓN» en las cuatro mociones de investigación. */
+@media(min-width:520px){.feed li.r{grid-template-columns:104px minmax(0,1fr)}}
 .feed .stg{display:block;font:600 11px/1.4 ui-monospace,Menlo,monospace;
   letter-spacing:.1em;text-transform:uppercase;color:currentColor;
   padding-top:11px;overflow-wrap:anywhere}
@@ -1505,7 +1544,7 @@ def face_mini(L, r=""):
     return f'<span class="noface fmini" aria-hidden="true">{ini}</span>'
 
 
-def person_chip(L, r, name=None, cls=""):
+def person_chip(L, r, name=None, cls="", bench=False):
     """Una persona, anclada por su cara.
 
     El sitio existe porque «una tabla de 130 nombres no se puede leer», y la
@@ -1518,10 +1557,31 @@ def person_chip(L, r, name=None, cls=""):
     # `name` llega ya escrito: la lista nominal de una votación lo reordena en
     # el navegador y el texto tiene que ser el mismo que puso el servidor.
     nm = esc(name if name is not None else nice_name(L["full_name"] if L else ""))
-    inner = f'{face_mini(L, r)}<span class="nm">{nm}</span>'
+    # `bench=True` cierra la ficha con el logotipo de su bancada. Quién firma una
+    # moción y de qué bancada es la misma pregunta; hasta aquí el nombre venía
+    # solo y había que abrir la ficha para saberlo.
+    tail = bench_logo(L["party"], r, 18, "bmini") if bench and L else ""
+    inner = f'{face_mini(L, r)}<span class="nm">{nm}</span>{tail}'
     if L:
         return f'<a class="pchip {cls}" href="{leg_url(r, L["slug"])}">{inner}</a>'
     return f'<span class="pchip pl {cls}">{inner}</span>'
+
+
+def signer_pop(rest, r=""):
+    """Los firmantes que no caben en la fila, con nombre y bancada.
+
+    Se renderizan siempre y se ocultan con CSS: son 233 firmas en las 107
+    mociones, así que «cargarlas todas» cuesta menos que cualquier alternativa
+    con JavaScript, y funciona sin él."""
+    if not rest:
+        return ""
+    li = []
+    for s in rest:
+        L = s["leg"]
+        nm = esc(nice_name(L["full_name"] if L else s["name_raw"]))
+        who = f'<a href="{leg_url(r, L["slug"])}">{nm}</a>' if L else f"<span>{nm}</span>"
+        li.append(f'<li>{bench_logo(L["party"] if L else "", r, 18)}{who}</li>')
+    return f'<span class="mpop"><ul>{"".join(li)}</ul></span>'
 
 
 # ------------------------------------------------------------------ hemiciclo
@@ -2067,8 +2127,11 @@ def load(con):
             m["amendment"] = 1
             m["alias_name"] = d["alias_name"][r["committee_id"]]
         m["committee_id"] = c["id"]
+        # Por la cámara de la comisión, no por «S»: mientras sólo hubo rosters
+        # del Senado daba igual, y en cuanto entra una comisión de Diputados
+        # el nombre se busca en el padrón equivocado y no casa ninguno.
         m["leg"] = (d["by_id"].get(m["legislator_id"])
-                    or d["by_last"].get(("S", norm(m["name_raw"]))))
+                    or d["by_last"].get((c["chamber"], norm(m["name_raw"]))))
         d["ctte_mem"].setdefault(c["id"], []).append(m)
         if m["leg"]:
             d["leg_cttes"].setdefault(m["leg"]["slug"], []).append(m)
@@ -4631,12 +4694,55 @@ confundan con faltas.</p></section>''' if top else ""}
 # where the Senate approved its cuadros, which we parse; `source_url` is our
 # local mirror of that PDF, so the public copy is rebuilt from its filename.
 DIARIO = "https://senado.congreso.gob.pe/wp-content/uploads/2026/08/"
+# Quién preside sí está publicado, y en otro sitio que el cuadro de miembros.
+MESAS = ("https://senado.congreso.gob.pe/mesas-directivas-y-horarios-de-"
+         "sesiones-de-las-comisiones-parlamentarias/")
+MESA_LABEL = {"presidencia": "Preside", "vicepresidencia": "Vicepreside",
+              "secretaria": "Secretaría"}
+MESA_ORDER = ("presidencia", "vicepresidencia", "secretaria")
+
+
+def mesa_of(d, c):
+    """-> [(cargo, miembro)] en orden de jerarquía, sólo los que existen."""
+    by = {m["mesa"]: m for m in d["ctte_mem"].get(c["id"], []) if m.get("mesa")}
+    return [(k, by[k]) for k in MESA_ORDER if k in by]
+
+
+def mesa_row(d, c, r="", size=20):
+    """La mesa directiva como tres personas con cara y logotipo de bancada.
+
+    Es lo único que se sabe de una comisión antes de que dictamine nada, y es la
+    respuesta a «quién manda aquí»: la presidencia decide si un proyecto se ve."""
+    mesa = mesa_of(d, c)
+    if not mesa:
+        return ""
+    li = []
+    for cargo, m in mesa:
+        bench = m["bench"] or (m["leg"] or {}).get("party")
+        li.append(f'<li><span class="ro">{MESA_LABEL[cargo]}</span>'
+                  f'{bench_logo(bench, r, size)}'
+                  + (f'<a href="{leg_url(r, m["leg"]["slug"])}">'
+                     f'{esc(nice_name(m["leg"]["full_name"]))}</a>' if m["leg"]
+                     else f'<span>{esc(nice_name(m["name_raw"]))}</span>')
+                  + "</li>")
+    return f'<ul class="mesa">{"".join(li)}</ul>'
 
 
 def diario_url(src):
     # ponytail: one diario so far, so one upload folder. A second one needs the
     # public URL stored at ingest time instead of reconstructed here.
     return DIARIO + pathlib.PurePath(src or "").name
+
+
+def roster_src(ms):
+    """El diario del que salió el cuadro.
+
+    No es `ms[0]`: desde que las mesas directivas se ingieren de una página web,
+    hay filas cuyo `source_url` es esa página, y ordenadas por apellido cualquiera
+    de ellas puede caer la primera. `diario_url()` sobre una URL que acaba en «/»
+    devolvía la carpeta de subidas del Senado y nada más."""
+    return next((m["source_url"] for m in ms
+                 if (m["source_url"] or "").lower().endswith(".pdf")), None)
 
 
 def mem_li(r, m, tag=""):
@@ -4678,7 +4784,7 @@ def roster(d, c, r="../"):
     tit = [m for m in ms if m["role"] == "titular" and not m["amendment"]]
     sup = [m for m in ms if m["role"] == "suplente" and not m["amendment"]]
     amd = [m for m in ms if m["amendment"]]
-    src = diario_url(ms[0]["source_url"])
+    src = diario_url(roster_src(ms))
     out = [f'<section><h2>Composición ({len(tit)} titulares'
            + (f", {len(sup)} suplentes" if sup else "") + ")</h2>"
            if tit or sup else
@@ -4692,6 +4798,10 @@ def roster(d, c, r="../"):
         out.append('<div class="note">Este cuadro es el del Senado 2026-2031; los '
                    'proyectos de abajo son del Congreso unicameral 2021-2026, que '
                    'tuvo una comisión homónima.</div>')
+    if mesa_of(d, c):
+        out.append('<h3>Mesa directiva</h3>' + mesa_row(d, c, r, 24)
+                   + '<p class="sm mut" style="margin:8px 0 18px">La presidencia '
+                     'fija la agenda: un proyecto se ve cuando ella lo pone.</p>')
     if tit:
         # Which benches hold this committee. A dictamen needs a majority of the
         # titulares, so the split is the whole story of what can come out of it.
@@ -4700,11 +4810,13 @@ def roster(d, c, r="../"):
             + '<figcaption>Los titulares, por bancada: un dictamen sale con la '
               'mayoría de estas plazas.</figcaption></figure>')
         out.append(f'<h3>Titulares ({len(tit)})</h3><ul class="roll" id="titulares">'
-                   + "".join(mem_li(r, m) for m in tit) + "</ul>")
+                   + "".join(mem_li(r, m, MESA_LABEL.get(m.get("mesa"), ""))
+                             for m in tit) + "</ul>")
     if sup:
         out.append(f'<h3 style="margin-top:18px">Suplentes ({len(sup)})</h3>'
                    f'<ul class="roll" id="suplentes">'
-                   + "".join(mem_li(r, m) for m in sup) + "</ul>")
+                   + "".join(mem_li(r, m, MESA_LABEL.get(m.get("mesa"), ""))
+                             for m in sup) + "</ul>")
     if tit or sup:
         out.append('<p class="sm mut" style="margin-top:14px">El suplente ocupa la '
                    'plaza cuando el titular falta, y en esa sesión vota y firma el '
@@ -4733,8 +4845,11 @@ def ctte_prov(d, c, today):
     ms = d["ctte_mem"].get(c["id"], [])
     lines = [f'Comisiones asignadas a cada proyecto: expediente del proyecto en '
              f'<code>{API}/proyecto-ley</code>.']
-    if ms:
-        src = diario_url(ms[0]["source_url"])
+    if any(m.get("mesa") for m in ms):
+        lines.append(f'Mesa directiva: <a href="{MESAS}">cuadro de mesas '
+                     f'directivas del Senado ↗</a>.')
+    if roster_src(ms):
+        src = diario_url(roster_src(ms))
         lines.append(
             f'Composición: <a href="{esc(src)}">Diario de los Debates del Senado, '
             f'sesión de aprobación de los cuadros ↗</a>. Ninguna cámara la publica '
@@ -5524,10 +5639,10 @@ q.addEventListener("input",sync);sync();}})()
             sg = d["signers"].get(m["id"], [])
             # Con cara. «Qué diputado la declaró» es la pregunta que trae a
             # alguien a una moción, y hasta aquí la respuesta era texto gris.
-            who = "".join(
-                f'<li>{person_chip(s["leg"], "", None if s["leg"] else nice_name(s["name_raw"]))}</li>'
-                for s in sg[:1 if small else 3])
             keep = 1 if small else 3
+            who = "".join(
+                f'<li>{person_chip(s["leg"], "", None if s["leg"] else nice_name(s["name_raw"]), bench=True)}</li>'
+                for s in sg[:keep])
             mrows.append(
                 f'<li class="r {tone}" id="m-{esc(m["id"])}">'
                 f'<span class="stg">{esc(label)}</span>'
@@ -5536,7 +5651,8 @@ q.addEventListener("input",sync);sync();}})()
                 f'<span class="t">{esc(clip(m["summary"], 120 if small else 220))}</span>'
                 f'<div class="sm mut sign" style="margin-top:6px">Firman:'
                 f'<ul class="roll signers">{who}'
-                + (f'<li><span class="pl">y {len(sg) - keep} más</span></li>'
+                + (f'<li class="more"><span class="pl" tabindex="0">'
+                   f'y {len(sg) - keep} más</span>{signer_pop(sg[keep:])}</li>'
                    if len(sg) > keep else "")
                 + '</ul></div>'
                 + (f'<span class="chip wait" style="margin-top:6px">'
@@ -5916,6 +6032,43 @@ def bench_rankings(d, r=""):
             f'lleva su denominador al lado.</p></section>')
 
 
+def home_cttes(d, r=""):
+    """Las comisiones de este Congreso, con quién las preside.
+
+    En portada porque la comisión es donde muere o sale un proyecto y hasta aquí
+    la palabra «comisiones» solo aparecía como un destino más del índice. Las
+    del Senado traen mesa directiva porque el Senado la publica; las de la
+    Cámara no, y la fila lo dice en lugar de dejar el hueco."""
+    cur = [c for c in d["cttes"].values() if (c["per_par"] or 0) >= 2026]
+    if not cur:
+        return ""
+    cols = []
+    for ch in ("D", "S"):
+        cs = sorted((c for c in cur if c["chamber"] == ch),
+                    key=lambda c: (not mesa_of(d, c), c["name"]))
+        if not cs:
+            continue
+        # Sin mesa que enseñar, la fila es sólo el nombre: repetir «mesa directiva
+        # sin publicar» diecinueve veces dice una vez lo que pasa y dieciocho
+        # veces nada. Va una sola vez, arriba.
+        any_mesa = any(mesa_of(d, c) for c in cs)
+        rows = "".join(
+            f'<li><a class="t" href="{ctte_url(r, c)}">{esc(c["name"])}</a>'
+            + mesa_row(d, c, r) + "</li>" for c in cs)
+        cols.append(f'<div class="card"><h3><span class="chip {ch.lower()}">'
+                    f'{esc(CHAMBER[ch])}</span> <b>{len(cs)}</b></h3>'
+                    + ("" if any_mesa else '<p class="sm mut" style="margin:8px 0 0">'
+                       'Aún no publica quién las preside.</p>')
+                    + f'<ul class="cttelist{"" if any_mesa else " tight"}">'
+                      f'{rows}</ul></div>')
+    nmesa = sum(1 for c in cur if mesa_of(d, c))
+    return f"""<section><h2>Las comisiones, y quién las preside</h2>
+<div class="grid g2">{"".join(cols)}</div>
+<p class="sm mut" style="margin-top:14px">La presidencia decide qué proyecto se
+ve. Publicadas {nmesa} de {len(cur)} mesas: el Senado sí, la Cámara de Diputados
+todavía no. <a href="{r}comisiones.html">Todas las comisiones</a>.</p></section>"""
+
+
 def render_home(d, base, today):
     cur = [b for b in d["bills"] if b["per_par"] >= 2026]
     old = [b for b in d["bills"] if b["per_par"] < 2026]
@@ -6048,6 +6201,8 @@ registrado: <b>{fecha(last)}</b>.</p>
 bancadas, una por una</a>.</p></section>
 
 {bench_rankings(d)}
+
+{home_cttes(d)}
 
 <section><h2>Actividad del Congreso actual</h2>
 <dl class="tiles">

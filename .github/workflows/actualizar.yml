@@ -52,6 +52,7 @@ jobs:
           python3 -m ingest.run expedientes     # solo los que aún no tienen trámite
           python3 -m ingest.run votes
           python3 -m ingest.run textos          # solo los que aún no tienen texto
+          python3 -m ingest.run comisiones      # nómina de la Cámara + mesas del Senado
           python3 -m ingest.run status
 
       - name: Comisiones desde el Diario

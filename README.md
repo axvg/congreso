@@ -19,6 +19,7 @@ python3 -m ingest.run bills        # bill lists, both periods
 python3 -m ingest.run expedientes  # dossiers: timeline, committees, documents
 python3 -m ingest.run votes        # roll-call PDFs + diario de debates + attendance
 python3 -m ingest.run textos       # the filed text of each bill, from its PDF
+python3 -m ingest.run comisiones   # nómina de la Cámara + mesas directivas del Senado
 python3 -m ingest.run status       # counts and coverage
 python3 -m ingest.photos           # 190 retratos -> assets/photos/ (una vez)
 
@@ -34,7 +35,12 @@ fetches what is missing, so it is a one-off unless the padrón changes.
 
 Committee rosters come from the diario de debates rather than any API:
 `python3 -c "from ingest import db,committees as c; c.ingest(db.connect(),'S',
-db.DB.parent/'pdf'/'PLO-2026-3-SENADO.pdf')"`.
+db.DB.parent/'pdf'/'PLO-2026-3-SENADO.pdf')"`. Only the Senado has one. The
+Cámara de Diputados has not approved a cuadro de comisiones, so `ingest.run
+comisiones` stores its 19 committees by name and by the id the bills API uses,
+and no members — the roster tables its own site serves under each committee URL
+are the Senado's Comisión de Constitución pasted seven times, byte for byte, and
+would have staffed the Cámara entirely with senators.
 
 Each ingest module has a `demo()` self-check that hits the live sources:
 `python3 -m ingest.spley`, `python3 -m ingest.legislators`, and so on. They are
@@ -76,6 +82,8 @@ wrong vote row is worse than a missing one.
 | Legislators | `GET {diputados,senado}.congreso.gob.pe/wp-json/wp/v2/{diputado,senador}` |
 | Roll calls, diarios | `GET /wp-json/wp/v2/media?per_page=100` on both chamber hosts |
 | Enacted law | `GET api.congreso.gob.pe/adlp-visor-service/ley/leyes?nroley1=&nroley2=` |
+| Committees, by id | `GET /spley-portal-service/comisiones` + `/periodo-parlamentario/2026/filtros?codTipoParl=D` |
+| Mesas directivas | `GET senado.congreso.gob.pe/wp-json/wp/v2/pages?slug=mesas-directivas-y-horarios-de-sesiones-de-las-comisiones-parlamentarias` |
 
 Five things are not obvious and cost real time:
 
@@ -112,4 +120,13 @@ is normalised names, 190/190 for the current period.
 No law, decree or treaty has been enacted under this Congress yet — those
 services are live and empty. The 2021–2026 roll-call backfill (426 sessions) is
 an OCR problem, not a scraping one: every one is a printed-then-rescanned image
-with no text layer. Committee membership is published nowhere machine-readable.
+with no text layer.
+
+Committee membership is published nowhere machine-readable, and for the Cámara
+de Diputados it is not published at all: no cuadro de comisiones, no roster, and
+no mesas directivas. Its Junta de Portavoces put the "distribución de las
+presidencias, vicepresidencias y secretarías" on the agenda of 11/08/2026 —
+`AGENDA-JP-DIPUTADOS-11-08-2026-01.pdf` carries the heading and not the annex —
+and its only diario de debates so far, `PLO-2026-1-IDIPUTADOS.pdf`, is the
+sesión de instalación. So the Cámara's committee pages name the committee and
+say who is in it only once the Cámara does.

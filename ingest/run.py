@@ -1,6 +1,6 @@
 """Ingest runner.
 
-`python3 -m ingest.run bills|members|expedientes|votes|textos|status`
+`python3 -m ingest.run bills|members|expedientes|votes|textos|comisiones|status`
 """
 import concurrent.futures as cf
 import sys
@@ -20,6 +20,16 @@ def members(con):
     for ch in ("D", "S"):
         n, matched = legislators.ingest(con, ch)
         print(f"{ch}: {n} legislators, {matched} joined to the bills API", flush=True)
+
+
+def comisiones(con):
+    """The Cámara's nómina, and the Senado's mesas directivas. Both live."""
+    from . import committees as c
+    print(f"diputados: {c.ingest_nomina(con)} comisiones (sin roster: la Cámara "
+          f"no ha aprobado cuadro)", flush=True)
+    nc, nm, ins = c.ingest_mesas(con, "S")
+    print(f"senado: {nm} cargos de mesa en {nc} comisiones "
+          f"({ins} no estaban en el cuadro del diario)", flush=True)
 
 
 def votes(con, chamber=None):
@@ -148,4 +158,5 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     con = db.connect()
     {"bills": bills, "members": members, "expedientes": expedientes,
-     "votes": votes, "textos": textos, "status": status}[cmd](con, *sys.argv[2:])
+     "votes": votes, "textos": textos, "comisiones": comisiones,
+     "status": status}[cmd](con, *sys.argv[2:])

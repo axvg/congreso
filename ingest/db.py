@@ -73,6 +73,12 @@ CREATE TABLE IF NOT EXISTS committee_member (
   name_raw      TEXT NOT NULL,
   bench         TEXT,
   role          TEXT,                -- titular | suplente
+  -- presidencia | vicepresidencia | secretaria, NULL for a plain seat. A mesa
+  -- officer is always a titular (art. 44 admits no suplente in the office), so
+  -- this is a second axis over `role`, not a value of it. Only the Senado
+  -- publishes its mesas; where a source names the bench and not the person,
+  -- `legislator_id` and `name_raw` carry the bench, never a guessed name.
+  mesa          TEXT,
   amendment     INTEGER DEFAULT 0,   -- 1 = a later change filed by oficio
   source_url    TEXT,
   PRIMARY KEY (committee_id, name_raw, role)
@@ -187,6 +193,64 @@ CREATE TABLE IF NOT EXISTS attendance (
   PRIMARY KEY (chamber, held_on, taken_at, name_raw)
 );
 CREATE INDEX IF NOT EXISTS attendance_leg ON attendance(legislator_id);
+
+-- What a despacho costs. Neither table is published by the Congress: both come
+-- from the Portal de Transparencia Estándar, entity 16, which is the only place
+-- any of this is machine-readable. The congresista's OWN pay is in neither --
+-- see gastos.py. `legislator_id` is NULL for the ~60% of rows that belong to the
+-- institution rather than to a member (comisiones, Parlamento Andino, áreas
+-- administrativas, ex-presidentes de la República); those are not a member's
+-- cost and must never be divided across the padrón to fake one.
+CREATE TABLE IF NOT EXISTS payroll (
+  id            INTEGER PRIMARY KEY,   -- PK_ID_PERSONAL, stable upstream
+  year          INTEGER NOT NULL,
+  month         INTEGER NOT NULL,
+  regimen       TEXT,                  -- 1 CAS | 2 D.L.276 | 3 728/otros | 8 pensionista
+  name_raw      TEXT,                  -- paterno materno nombres
+  cargo         TEXT,
+  dependencia   TEXT,                  -- the congresista's name, for despacho staff
+  legislator_id TEXT,                  -- resolved from `dependencia`, NULL if not a member
+  remuneracion  REAL, honorarios REAL, incentivo REAL,
+  gratificacion REAL, otros REAL, total REAL,
+  source_url    TEXT
+);
+CREATE INDEX IF NOT EXISTS payroll_leg ON payroll(legislator_id, year, month);
+CREATE INDEX IF NOT EXISTS payroll_ym ON payroll(year, month);
+
+-- Viáticos y pasajes, one row per authorised trip. The only per-member spend with
+-- real variance: S/430 to S/136,892 across a full year (2025).
+CREATE TABLE IF NOT EXISTS travel (
+  id            INTEGER PRIMARY KEY,   -- PK_VIATICOS
+  year          INTEGER NOT NULL,
+  month         INTEGER NOT NULL,
+  kind          TEXT,                  -- 1 viáticos | 2 pasajes
+  area_raw      TEXT,                  -- the despacho charged
+  legislator_id TEXT,
+  traveller     TEXT,                  -- member or their staff; often not the same
+  went_on       TEXT, returned_on TEXT,
+  route         TEXT,
+  authority     TEXT,                  -- 'MESA DIRECTIVA'
+  resolution    TEXT,                  -- the acuerdo de mesa relied on
+  pasajes       REAL, viaticos REAL, total REAL,   -- nacional
+  pasajes_ext   REAL, viaticos_ext REAL, total_ext REAL,
+  source_url    TEXT
+);
+CREATE INDEX IF NOT EXISTS travel_leg ON travel(legislator_id, year, month);
+CREATE INDEX IF NOT EXISTS travel_ym ON travel(year, month);
+
+-- The denominator for travel: the weeks members are meant to be in their region.
+-- Numbered 1..191 (Oct 2009 -> Jul 2026) and the numbering is not a key -- 103 is
+-- used twice, for ABRIL and MAYO 2018.
+CREATE TABLE IF NOT EXISTS rep_week (
+  n         INTEGER NOT NULL,
+  period    TEXT NOT NULL,             -- 'JULIO 2026', as published
+  starts_on TEXT, ends_on TEXT,        -- NULL when suspended with no dates given
+  held      INTEGER DEFAULT 1,         -- 0 = SUSPENDIDA / NO SE REALIZÓ
+  raw       TEXT NOT NULL,             -- the cell verbatim, typos included
+  note      TEXT,                      -- why the parsed dates differ from `raw`
+  oficio_url TEXT,
+  PRIMARY KEY (n, period)
+);
 """
 
 # Columns added after the first tables shipped. CREATE TABLE IF NOT EXISTS will not
@@ -195,6 +259,7 @@ LATE = [("vote", "n_yes_final INTEGER"), ("vote", "n_no_final INTEGER"),
         ("vote", "n_abstain_final INTEGER"), ("vote", "provisional INTEGER DEFAULT 0"),
         ("vote", "final_source_url TEXT"), ("vote_row", "source TEXT"),
         ("committee_member", "amendment INTEGER DEFAULT 0"),
+        ("committee_member", "mesa TEXT"),
         ("bill_action", "doc_id INTEGER"), ("bill_action", "doc_name TEXT"),
         ("bill_text", "note TEXT")]
 
