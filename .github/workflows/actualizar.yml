@@ -53,6 +53,9 @@ jobs:
           python3 -m ingest.run votes
           python3 -m ingest.run textos          # solo los que aún no tienen texto
           python3 -m ingest.run comisiones      # nómina de la Cámara + mesas del Senado
+          # El PTE publica el mes M a comienzos del M+1, así que solo el año en
+          # curso se mueve. El backfill 2021-2025 es una vez y vive en la caché.
+          python3 -m ingest.run gastos "$(date -u +%Y)"
           python3 -m ingest.run status
 
       - name: Comisiones desde el Diario
@@ -74,7 +77,7 @@ jobs:
       - name: Autochequeos
         run: |
           set -euo pipefail
-          for m in spley legislators motions votes committees texts; do
+          for m in spley legislators motions votes committees texts gastos; do
             echo "--- $m"; python3 -m ingest.$m
           done
 

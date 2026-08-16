@@ -19,7 +19,7 @@ import sys
 import time
 import unicodedata
 
-from ingest import db
+from ingest import db, gastos
 
 ROOT = pathlib.Path(__file__).resolve().parent
 DBP = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else db.DB
@@ -350,6 +350,21 @@ def num(n):
     """14864 -> '14 864'. Peru writes thousands with a space, and a comma here
     would collide with the commas inside bill titles."""
     return f"{n:,}".replace(",", " ")
+
+
+def soles(x, cents=False):
+    """631414.32 -> «S/ 631 414». Sin céntimos salvo que se pidan: seis dígitos
+    con dos decimales, ciento treinta veces seguidas, son ruido."""
+    s = f"{x:,.2f}" if cents else f"{round(x):,}"
+    return "S/\u00a0" + s.replace(",", " ")
+
+
+def soles_m(x):
+    """73 347 942 -> «S/ 73,3 M». Un agregado de ocho dígitos en un titular de
+    tarjeta se parte en dos líneas y no se lee; los millones sí."""
+    if abs(x) < 1_000_000:
+        return soles(x)
+    return f"S/\u00a0{x / 1_000_000:.1f}".replace(".", ",") + "\u00a0M"
 
 
 # ------------------------------------------------------- identidad de bancada
@@ -1213,6 +1228,22 @@ code{overflow-wrap:anywhere}
   text-align:right}
 .ranked .pc{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;
   text-align:right}
+/* El ranking de gasto tiene una columna más (el puesto) y una barra de dos
+   tramos, así que se coloca por áreas en vez de heredar la rejilla de arriba.
+   `display:flex` en la pista: con el `display:block` que heredaba, el tramo de
+   viajes se dibujaba DEBAJO del de planilla y desaparecía bajo el recorte. */
+.ranked.gasto a{grid-template-columns:26px minmax(0,1fr) 104px}
+.ranked.gasto .rk{grid-area:1/1;font:600 12.5px/1 ui-monospace,Menlo,monospace;
+  color:var(--muted);font-variant-numeric:tabular-nums}
+.ranked.gasto .lbl{grid-area:1/2;display:flex;align-items:center;gap:8px;
+  flex-wrap:wrap;color:var(--ink)}
+.ranked.gasto .lbl small{flex-basis:100%;margin-left:34px}
+.ranked.gasto .n{grid-area:1/3}
+.ranked.gasto .track{grid-area:2/2/3/4;display:flex}
+@media(min-width:640px){
+  .ranked.gasto a{grid-template-columns:26px minmax(150px,1.2fr) minmax(0,1.6fr) 104px}
+  .ranked.gasto .track{grid-area:1/3}
+  .ranked.gasto .n{grid-area:1/4}}
 .feed{list-style:none;margin:0;padding:0}
 /* `>`, no descendiente: las fichas de firmantes son <li> dentro de un <li> de
    .feed, y con `.feed li` cada una se llevaba el filete inferior de una fila
@@ -1344,7 +1375,9 @@ NAV = (
         ("votaciones.html", "Votaciones",
          "Cómo votó cada quien, nombre por nombre, en cada lista nominal"),
         ("asistencia.html", "Asistencia",
-         "Quién estuvo en la sala en cada toma de asistencia"))),
+         "Quién estuvo en la sala en cada toma de asistencia"),
+        ("gasto.html", "Gasto",
+         "Lo que cuesta cada despacho: planilla y viajes, mes a mes"))),
 )
 
 
@@ -2298,7 +2331,82 @@ def load(con):
             d["gp_agree"][(v["chamber"], p)] = (a + (1 if top == win else 0), t + 1)
             if sum(bc.get(k, 0) for k in ("SI", "NO", "ABST")) >= 3:
                 d["vbloc"][(v["id"], p)] = top
+    load_gasto(d, con)
     return d
+
+
+# --------------------------------------------------------------------- gasto
+#
+# El Congreso no publica lo que recibe cada parlamentario. Lo que sí existe, y
+# en el Portal de Transparencia Estándar y no en el Congreso, es la planilla de
+# cada despacho persona a persona y cada viaje autorizado con cargo a él. Eso es
+# lo que cuesta un despacho, que no es lo mismo que lo que cobra su titular, y
+# la diferencia se dice en cada sitio donde sale una cifra.
+#
+# Se agrega en SQL: son 266 883 filas de planilla y 38 018 de viajes, y traerlas
+# a Python para sumarlas costaba más que todo el resto de `load()` junto.
+GASTO_Y = 2025          # el último año civil completo publicado
+
+
+def load_gasto(d, con):
+    d["gasto"], d["gasto_mes"] = {}, {}
+    have = con.execute("SELECT count(*) FROM sqlite_master WHERE type='table' "
+                       "AND name IN ('payroll','travel','rep_week')").fetchone()[0]
+    if have < 3:
+        d["rep_weeks"] = []
+        return
+    # Una persona, una fila. El padrón tiene a Barbarán Reyes dos veces con dos
+    # grafías -- «Rosangela» y «Rosangella», una por cámara -- y el portal usa
+    # sólo una, así que su planilla cae en el asiento de 2026 y sus viajes en el
+    # de 2021. Sin unirlas, la lista la enseña dos veces: una con S/ 14 774 y
+    # otra con medio millón. El par lo detecta el ingestor y lo publica; aquí
+    # sólo se aplica, y para el año que se muestra gana el asiento de ese
+    # periodo. Si aparece un segundo caso, su `demo()` falla antes que esto.
+    pairs = {}
+    for a, b in gastos.split_despachos(con):
+        La, Lb = d["by_id"].get(a), d["by_id"].get(b)
+        if La and Lb:
+            pairs[a] = pairs[b] = {La["per_par"]: a, Lb["per_par"]: b}
+
+    def seat(lid, y, m):
+        """El asiento al que pertenece ese mes, no el que trajo la fila."""
+        return pairs[lid].get(gastos.per_par(y, m), lid) if lid in pairs else lid
+
+    for tab, key in (("payroll", "planilla"), ("travel", "viajes")):
+        for r in con.execute(
+                f"SELECT legislator_id id, year y, month m, sum(total) t, "
+                f"count(*) n FROM {tab} WHERE legislator_id IS NOT NULL "
+                f"GROUP BY 1, 2, 3"):
+            g = d["gasto"].setdefault(seat(r["id"], r["y"], r["m"]), {})
+            g.setdefault(r["y"], {"planilla": 0.0, "viajes": 0.0, "nviajes": 0})
+            g[r["y"]][key] += r["t"] or 0.0
+            if key == "viajes":
+                g[r["y"]]["nviajes"] += r["n"]
+    # Serie mensual del conjunto: es donde se ve el agujero de enero a abril de
+    # 2026, que fue una suspensión acordada por la Mesa y no austeridad.
+    for r in con.execute(
+            "SELECT year y, month m, sum(total) t FROM travel "
+            "WHERE legislator_id IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2"):
+        d["gasto_mes"][(r["y"], r["m"])] = r["t"] or 0.0
+    d["rep_weeks"] = [dict(r) for r in con.execute(
+        "SELECT * FROM rep_week ORDER BY n DESC")]
+
+
+def gasto_year(d, L, y=GASTO_Y):
+    """-> dict del año o None. Nunca cero: un despacho sin filas es un despacho
+    del que no se publicó nada, no uno que no gastó."""
+    return (d["gasto"].get(L["id"]) or {}).get(y)
+
+
+def gasto_rank(d, y=GASTO_Y):
+    """[(total, legislator)] de mayor a menor, sólo los que tienen dato."""
+    out = []
+    for lid, ys in d["gasto"].items():
+        g = ys.get(y)
+        L = d["by_id"].get(lid)
+        if g and L:
+            out.append((g["planilla"] + g["viajes"], L, g))
+    return sorted(out, key=lambda x: -x[0])
 
 
 # ------------------------------------------------------------- text of a bill
@@ -3502,6 +3610,7 @@ de la cámara, no sobre una muestra. El periodo {per} corre hasta julio de
 {peer_strips(d, L, base, r)}
 {seatmap}
 {att_block(d, L, base)}
+{gasto_block(d, L, r)}
 {ct_html}
 {contact_html}
 {bio}
@@ -4687,6 +4796,185 @@ confundan con faltas.</p></section>''' if top else ""}
                       "sesión, con licencias contadas aparte.")
 
 
+# --------------------------------------------------------------------- gasto
+
+PTE = ("https://www.transparencia.gob.pe/personal/pte_transparencia_personal.aspx"
+       "?id_entidad=16")
+SEMANA = "https://www3.congreso.gob.pe/semana-representacion/"
+
+
+def gasto_row(d, L, tot, g, rank, top, r=""):
+    """Una fila del ranking: cara, bancada, barra partida en planilla y viajes.
+
+    Las dos partes en la misma barra porque son de naturaleza distinta -- una es
+    el sueldo de cuatro o cinco personas, la otra son pasajes -- y sumarlas en un
+    número solo escondería que el segundo despacho más caro lo es por viajar."""
+    pl, vi = g["planilla"], g["viajes"]
+    return (f'<li><a href="{leg_url(r, L["slug"])}">'
+            f'<span class="rk">{rank}</span>'
+            f'<span class="lbl">{face_mini(L, r)}'
+            f'{esc(nice_name(L["full_name"]))}'
+            f'<small>{soles(pl)} en planilla · {soles(vi)} en '
+            f'{num(g["nviajes"])} viajes</small></span>'
+            f'<span class="track">'
+            f'<i style="width:{100 * pl / top:.2f}%;background:var(--accent)"></i>'
+            f'<i style="width:{100 * vi / top:.2f}%;background:var(--vio)"></i>'
+            f'</span><span class="n">{soles(tot)}</span></a></li>')
+
+
+def gasto_block(d, L, r="../"):
+    """Lo que costó su despacho, en la ficha.
+
+    Su puesto sale del mismo `gasto_rank()` que la página de gasto, así que las
+    dos no pueden discrepar. Sin dato no se escribe nada: un despacho del que el
+    portal no publicó filas no es un despacho de cero soles."""
+    g = gasto_year(d, L)
+    if not g:
+        return ""
+    rank = gasto_rank(d)
+    tot = g["planilla"] + g["viajes"]
+    pos_ = next(i + 1 for i, (_t, P, _g) in enumerate(rank) if P["id"] == L["id"])
+    med = median([t for t, _P, _g in rank])
+    return f"""<section><h2>Lo que costó su despacho en {GASTO_Y}</h2>
+<dl class="tiles">
+<div class="tile"><dt>Total</dt><dd>{soles(tot)}
+<small>puesto {pos_} de {len(rank)}</small></dd></div>
+<div class="tile"><dt>Planilla</dt><dd>{soles(g["planilla"])}
+<small>sueldos de su equipo</small></dd></div>
+<div class="tile"><dt>Viajes</dt><dd>{soles(g["viajes"])}
+<small>{num(g["nviajes"])} autorizaciones</small></dd></div>
+</dl>
+<p class="sm mut">La mediana de los {len(rank)} despachos fue {soles(med)}. No es
+lo que cobró: es lo que costó el despacho que se le asignó.
+<a href="{r}gasto.html">Cómo se calcula</a>.</p></section>"""
+
+
+def render_gasto(d, today):
+    rank = gasto_rank(d)
+    if not rank:
+        return None
+    tot = [t for t, _L, _g in rank]
+    top, med = tot[0], median(tot)
+    pl = sum(g["planilla"] for _t, _L, g in rank)
+    vi = sum(g["viajes"] for _t, _L, g in rank)
+    # Agrupado en tramos de cincuenta mil. 130 filas ordenadas de mayor a menor
+    # y sin un solo corte son una lista en la que sólo se leen las tres primeras;
+    # el tramo dice de un vistazo cuántos despachos hay en cada altura.
+    band = lambda t: int(t // 50_000) * 50_000  # noqa: E731
+    counts = {}
+    for t, _L, _g in rank:
+        counts[band(t)] = counts.get(band(t), 0) + 1
+    rows, cur_band = [], object()
+    for i, (t, L, g) in enumerate(rank):
+        b = band(t)
+        if b != cur_band:
+            cur_band = b
+            rows.append(f'<li class="gh">De {soles(b)} a {soles(b + 50_000)}'
+                        f'<b>{counts[b]}</b></li>')
+        rows.append(gasto_row(d, L, t, g, i + 1, top))
+    rows = "".join(rows)
+
+    # La serie mensual de viajes. Enero a abril de 2026 es un escalón, y no es
+    # que viajaran menos: el Acuerdo 083-2025-2026/MESA-CR suspendió veintiún
+    # acuerdos de facilidades del 1 de enero al 12 de abril. Sin decirlo, el
+    # hueco se lee como austeridad.
+    have = sorted(d["gasto_mes"])
+    serie = ""
+    if len(have) > 6:
+        # Rellenando los meses vacíos. De enero a marzo de 2026 no hay ni una
+        # fila, y una serie que sólo dibuja los meses que existen los saltaba
+        # sin dejar hueco: la suspensión desaparecía en vez de verse.
+        (y0, m0), (y1, m1) = have[0], have[-1]
+        mm = [(y0 + (m0 - 1 + i) // 12, (m0 - 1 + i) % 12 + 1)
+              for i in range((y1 - y0) * 12 + m1 - m0 + 1)]
+        pts = [(f'{MES[m - 1][:3]} {y % 100:02d}' if m in (1, 7) else "",
+                f'{MES[m - 1]} de {y}', round(d["gasto_mes"].get((y, m), 0)))
+               for y, m in mm]
+        serie = f"""<section><h2>Los viajes, mes a mes</h2>
+<figure>{col_chart(pts, "soles en viajes", 170, "gm", "var(--vio)")}
+<figcaption>Las tres columnas vacías de 2026 no son austeridad: el Acuerdo
+083-2025-2026/MESA-CR suspendió veintiún acuerdos de facilidades parlamentarias
+del 1 de enero al 12 de abril, en campaña electoral. Ni un viaje con cargo a un
+despacho en esos tres meses.</figcaption></figure></section>"""
+
+    ws = d["rep_weeks"]
+    susp = sum(1 for w in ws if not w["held"])
+    semana = ""
+    if ws:
+        last = [w for w in ws if w["starts_on"]][:12]
+        semana = f"""<section><h2>Semanas de representación</h2>
+<p>Una semana al mes el Pleno no sesiona y cada parlamentario viaja a su región.
+Es el denominador de los viajes: {len(ws)} convocadas desde 2009, {susp} de ellas
+suspendidas.</p>
+<ul class="feed">{"".join(
+    f'<li class="r {"st-dead" if not w["held"] else "st-pleno"}">'
+    f'<span class="stg">{"suspendida" if not w["held"] else "N.º " + str(w["n"])}</span>'
+    f'<span class="m">{esc(w["period"])}</span>'
+    f'<span class="t" style="font-weight:400">{esc(w["raw"])}</span>'
+    + (f'<span class="sm mut">{esc(w["note"])}</span>' if w["note"] else "")
+    + "</li>" for w in last)}</ul>
+<p class="sm mut">Las doce últimas. <a href="{SEMANA}">El calendario completo ↗</a>.</p>
+</section>"""
+
+    body = f"""<span class="eyebrow">Gasto</span>
+<h1>Lo que cuesta un despacho</h1>
+<p class="lede">No lo que cobra un parlamentario: lo que cuesta el despacho que
+se le asigna. Sueldo por sueldo de quienes trabajan en él y viaje por viaje con
+cargo a él. En {GASTO_Y}, la mediana fue <b>{soles(med)}</b>.</p>
+
+<dl class="tiles">
+<div class="tile"><dt>Despachos con dato</dt><dd>{len(rank)}
+<small>en {GASTO_Y}</small></dd></div>
+<div class="tile"><dt>Mediana</dt><dd>{soles(med)}
+<small>de {soles(tot[-1])} a {soles(top)}</small></dd></div>
+<div class="tile"><dt>En planilla</dt><dd>{soles_m(pl)}
+<small>{pctxt(round(pl), round(pl + vi))} del total</small></dd></div>
+<div class="tile"><dt>En viajes</dt><dd>{soles_m(vi)}
+<small>{num(sum(g["nviajes"] for _t, _L, g in rank))} autorizaciones</small></dd></div>
+</dl>
+
+<div class="note">Son los despachos del Congreso 2021-2026. Del actual todavía no
+hay nada: el portal publica cada mes a mediados del siguiente, y julio de 2026
+es aún el Congreso saliente.</div>
+
+<section><h2>Los {len(rank)} despachos de {GASTO_Y}</h2>
+<div class="filters"><input id="q" type="search"
+ placeholder="Filtrar por nombre" aria-label="Filtrar despachos"></div>
+<ul class="ranked gasto" id="ls">{rows}</ul>
+<p class="sm mut" id="cnt">Barra en dos tramos: planilla y viajes.</p>
+{FILTER_JS}</section>
+{serie}
+{semana}
+
+<section><h2>Lo que no se publica</h2>
+<p>La asignación por gastos operativos —el dinero que el parlamentario recibe
+además del sueldo— no se publica por persona. Tampoco su monto: el último
+acuerdo que lo fija, el 118-2023-2024/MESA-CR, dice que se actualiza «tomando
+como factor de actualización el Índice de Precios al Consumidor» y no imprime
+ninguna cifra.</p>
+<p>Hasta el 27 de julio de 2026 al menos había que rendirlo: el artículo 22 f)
+del Reglamento anterior exigía una liquidación mensual a Tesorería con un 30 %
+mínimo sustentado en comprobantes. Los tres reglamentos de la bicameralidad que
+entraron en vigor ese día —004, 005 y 006-2025-2026-CR— no contienen la
+expresión «gastos operativos» en ninguna parte y no exigen rendición alguna.</p>
+<p>Por eso esta página cuenta despachos y no bolsillos, y por eso el resto que
+el portal no atribuye a nadie —comisiones, Parlamento Andino, áreas
+administrativas— se queda fuera en lugar de repartirse entre 130 para redondear
+la cifra.</p></section>
+
+{prov([
+    f'Planilla y viajes: Portal de Transparencia Estándar, entidad 16, '
+    f'<a href="{PTE}">Congreso de la República ↗</a>. El Congreso no lo publica '
+    f'en su propio portal.',
+    f'Cada despacho se identifica por el nombre del parlamentario en el campo '
+    f'de dependencia, cruzado contra el padrón.',
+    f'<a href="{SEMANA}">Calendario de semanas de representación ↗</a>.',
+    f'Regenerado el {fecha(today)}.'])}"""
+    return shell("Gasto", body, 0,
+                 desc=f"Lo que costó cada despacho parlamentario en {GASTO_Y}: "
+                      f"planilla y viajes, del portal de transparencia.")
+
+
 # ---------------------------------------------------------------- comisiones
 
 # Neither cámara publishes who sits on a committee: the portals list names and
@@ -5258,6 +5546,11 @@ def _build(t0):
         n["listado"] += 1
     write(OUT / "asistencia.html", render_att_index(d, today))
     n["listado"] += 1
+
+    g = render_gasto(d, today)
+    if g:
+        write(OUT / "gasto.html", g)
+        n["listado"] += 1
 
     # ---- votes
     for v in d["votes"]:
@@ -6178,7 +6471,8 @@ las legislaturas.
              "bancadas.html": str(len(BENCH_ORDER)),
              "comisiones.html": num(len(d["cttes"])),
              "votaciones.html": num(len(d["votes"])),
-             "asistencia.html": num(len(d["sesiones"]))}
+             "asistencia.html": num(len(d["sesiones"])),
+             "gasto.html": num(len(gasto_rank(d)))}
     start_here = "".join(
         f'<div class="card"><span class="eyebrow">{esc(label)}</span>'
         f'<ul class="toc" style="margin-top:6px">'
@@ -6477,6 +6771,29 @@ def demo():
         assert not list((OUT / "comision").glob(f"{sl}*.html")), f"page for {name}"
     nsen = con.execute("SELECT count(*) FROM committee WHERE per_par=2026").fetchone()[0]
     assert len(d2["cttes"]) == nsen + 24 - len(ghosts), "committee count off"
+
+    # ---- gasto. Lo que puede salir mal aquí es publicar una cifra que no es de
+    # quien dice serla, así que se comprueban las tres cosas que la sostienen.
+    rank = gasto_rank(d2)
+    if rank:
+        ids = [L2["id"] for _t, L2, _g in rank]
+        assert len(ids) == len(set(ids)), \
+            "un despacho sale dos veces en el ranking de gasto"
+        assert all(L2["per_par"] == 2021 for _t, L2, _g in rank), \
+            f"{GASTO_Y} es del Congreso 2021-2026 y hay asientos de otro periodo"
+        # Nada repartido: la suma publicada tiene que ser exactamente la suma de
+        # lo que el portal atribuye a un despacho, ni un sol del resto.
+        att = con.execute(
+            "SELECT (SELECT coalesce(sum(total),0) FROM payroll "
+            " WHERE legislator_id IS NOT NULL AND year=?) "
+            "+ (SELECT coalesce(sum(total),0) FROM travel "
+            "   WHERE legislator_id IS NOT NULL AND year=?)", (GASTO_Y,) * 2
+        ).fetchone()[0]
+        assert abs(sum(t for t, _L, _g in rank) - att) < 1, \
+            "el total publicado no cuadra con lo que el portal atribuye"
+        g_html = (OUT / "gasto.html").read_text()
+        assert "no se publica" in g_html, \
+            "la página de gasto perdió lo que el Congreso NO publica"
 
     # ---- CSV on legislators and on the bill corpus, and they have to parse.
     L = d2["legs"][0]
@@ -7056,7 +7373,7 @@ def demo():
     # ...y el índice del teléfono: los ocho destinos, agrupados, sin JS y con
     # cada uno a un toque. Se comprueba en el HTML generado, no en NAV.
     dests = [u for _l, ds in NAV for u, _t, _d in ds]
-    assert len(dests) == 7 and len(set(dests)) == 7
+    assert len(dests) == 8 and len(set(dests)) == 8
     nv = (OUT / "index.html").read_text().split("</nav>")[0]
     for u in dests:
         assert nv.count(f'href="{u}"') == 2, \

@@ -223,7 +223,10 @@ CREATE TABLE IF NOT EXISTS travel (
   id            INTEGER PRIMARY KEY,   -- PK_VIATICOS
   year          INTEGER NOT NULL,
   month         INTEGER NOT NULL,
-  kind          TEXT,                  -- 1 viáticos | 2 pasajes
+  -- PTE calls this "Viajes nacionales / internacionales" (1/2) and it was that
+  -- until 2025; from 2026 the Congress flags most domestic trips 2 as well. Kept
+  -- verbatim, believed for nothing -- use `route` to tell a foreign trip.
+  kind          TEXT,
   area_raw      TEXT,                  -- the despacho charged
   legislator_id TEXT,
   traveller     TEXT,                  -- member or their staff; often not the same
@@ -231,7 +234,10 @@ CREATE TABLE IF NOT EXISTS travel (
   route         TEXT,
   authority     TEXT,                  -- 'MESA DIRECTIVA'
   resolution    TEXT,                  -- the acuerdo de mesa relied on
-  pasajes       REAL, viaticos REAL, total REAL,   -- nacional
+  pasajes       REAL, viaticos REAL, total REAL,
+  -- The *_E columns exist in the source and are zero in all 67 months: a trip to
+  -- Colombia is filed under kind=2 with its money in the _N columns. Kept so the
+  -- day they start being used is a visible change, not a silent undercount.
   pasajes_ext   REAL, viaticos_ext REAL, total_ext REAL,
   source_url    TEXT
 );

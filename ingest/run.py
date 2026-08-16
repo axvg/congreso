@@ -1,6 +1,6 @@
 """Ingest runner.
 
-`python3 -m ingest.run bills|members|expedientes|votes|textos|comisiones|status`
+`python3 -m ingest.run bills|members|expedientes|votes|textos|comisiones|gastos|status`
 """
 import concurrent.futures as cf
 import sys
@@ -147,10 +147,32 @@ def expedientes(con, limit=None, workers=6, redo=0):
     print(f"expedientes: ok={ok} fail={fail} actions={acts}", flush=True)
 
 
+def gastos(con, start_year=2021):
+    """Planilla y viajes por despacho (PTE, entidad 16) + semanas de representación."""
+    from . import gastos as g
+    n, s = g.ingest_weeks(con)
+    print(f"semanas de representación: {n} ({s} suspendidas o no realizadas)",
+          flush=True)
+    g.ingest(con, start_year)
+
+
 def status(con):
-    for t in ("legislator", "bill", "bill_sponsor", "bill_action", "vote", "vote_row"):
+    for t in ("legislator", "bill", "bill_sponsor", "bill_action", "vote", "vote_row",
+              "payroll", "travel", "rep_week"):
         n = con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
         print(f"{t:15} {n:>7}")
+    # The share of spend that names a member is the honest headline for gastos:
+    # the rest is institutional and is nobody's per-capita cost.
+    for t in ("payroll", "travel"):
+        # travel has a second, exterior money column that the source has never
+        # populated -- foreign trips are filed with their money in `total`. Summed
+        # anyway so the day it starts being used the number moves.
+        s = "coalesce(total,0)+coalesce(total_ext,0)" if t == "travel" else "total"
+        q = con.execute(f"SELECT count(DISTINCT legislator_id), "
+                        f"coalesce(sum({s}),0), (SELECT coalesce(sum({s}),0) "
+                        f"FROM {t}) FROM {t} WHERE legislator_id IS NOT NULL").fetchone()
+        pct = round(100 * q[1] / q[2], 1) if q[2] else 0.0
+        print(f"  {t}: {q[0]} despachos, S/{q[1]:,.0f} de S/{q[2]:,.0f} ({pct}%)")
     print("coverage:", db.coverage(con))
 
 
@@ -159,4 +181,4 @@ if __name__ == "__main__":
     con = db.connect()
     {"bills": bills, "members": members, "expedientes": expedientes,
      "votes": votes, "textos": textos, "comisiones": comisiones,
-     "status": status}[cmd](con, *sys.argv[2:])
+     "gastos": gastos, "status": status}[cmd](con, *sys.argv[2:])

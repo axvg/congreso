@@ -80,7 +80,19 @@ def personal(year, month):
 
 
 def viaticos(year, month):
-    """Trips authorised in one month. Empty list until published."""
+    """Trips authorised in one month. Empty list until published.
+
+    tipo_viaje=0 is both kinds, and the filter always agrees with the stored
+    CH_VIATICOS_TIPO. Do not trust that field for what it claims to be: the PTE
+    labels it "Viajes nacionales / Viajes internacionales", and in 2025-09 it is
+    exactly that (17 of 17 kind=2 rows read 'Lima Colombia Lima'), but by 2026-06
+    it is 544 kind=2 rows of which about 20 are foreign -- the rest are LIM-CIX
+    and LIMA-TRUJILLO. Whatever the Congress started using it for in 2026, it is
+    not the trip's destination. `route` is the only honest test of that.
+
+    Money is always in the _N columns. The _E pair exists in the source and is
+    zero in all 67 months, foreign trips included.
+    """
     return _rows(viaticos_url(year, month), "Reporte")
 
 
@@ -130,13 +142,23 @@ def resolve(legs, name, period):
 def ingest_month(con, year, month, legs=None):
     """One month of payroll and travel. Returns (payroll rows, travel rows).
 
-    Idempotent: both tables key on the PTE primary key, so re-running a month
-    replaces its rows in place.
+    Idempotent: a month that came back with rows is deleted and rewritten, so
+    re-running is a refresh and never a duplicate.
     """
     legs = roster(con) if legs is None else legs
     period = per_par(year, month)
     np = nt = 0
-    for r in personal(year, month):
+    rows, trips = personal(year, month), viaticos(year, month)
+    # Fetch both before deleting either: an empty month is the normal answer for
+    # anything not yet published, and wiping a stored month to replace it with
+    # nothing is how a publication lag turns into data loss. PK_ID_PERSONAL looks
+    # globally unique and monotonic today, but a corrected re-publication with
+    # fresh ids would otherwise leave the superseded rows behind forever.
+    if rows:
+        con.execute("DELETE FROM payroll WHERE year=? AND month=?", (year, month))
+    if trips:
+        con.execute("DELETE FROM travel WHERE year=? AND month=?", (year, month))
+    for r in rows:
         dep = r.get("VC_PERSONAL_DEPENDENCIA", "")
         db.upsert(con, "payroll", {
             "id": int(r["PK_ID_PERSONAL"]), "year": year, "month": month,
@@ -154,7 +176,7 @@ def ingest_month(con, year, month, legs=None):
             "total": _f(r.get("MO_PERSONAL_TOTAL")),
             "source_url": personal_url(year, month)})
         np += 1
-    for r in viaticos(year, month):
+    for r in trips:
         area = r.get("VC_VIATICOS_AREA", "")
         db.upsert(con, "travel", {
             "id": int(r["PK_VIATICOS"]), "year": year, "month": month,
@@ -265,8 +287,11 @@ def _week_dates(raw, period):
     """
     yr = re.search(r"\b(\d{4})\b", period)
     col_year = int(yr[1]) if yr else None
-    m = re.search(r"[Dd]el\s+\w+\s+(\d{1,2})(?:\s+de\s+(\w+))?\s+al\s+\w+\s+"
-                  r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", raw)
+    # Two traps in the weekday. The space after it is optional -- six cells read
+    # "Del lunes16 al viernes 20 de mayo de 2022" -- and it is accented, so an
+    # ASCII class quietly drops every week ending on a sábado or a miércoles.
+    m = re.search(r"[Dd]el\s+[^\W\d_]+\s*(\d{1,2})(?:\s+de\s+(\w+))?\s+al\s+"
+                  r"[^\W\d_]+\s*(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", raw)
     if not m:
         return None, None, None
     d1, m1, d2, m2, year = m[1], m[2], m[3], m[4], int(m[5])
@@ -286,6 +311,36 @@ def _week_dates(raw, period):
 def _fold(s):
     s = unicodedata.normalize("NFD", s or "")
     return "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+
+
+def split_despachos(con):
+    """Members whose planilla and viajes land on different legislator ids.
+
+    One human can sit in the padrón twice under two spellings -- the chambers
+    publish 'Barbaran Reyes, Rosangela Andrea' for 2026-2031 and the 2021-2026
+    roster has 'Barbarán Reyes, Rosangella Andrea' -- and PTE uses both. The
+    exact-match join then splits one despacho's cost in two, which on a cost page
+    reads as a member who spent S/14,774 in a year instead of S/600,000.
+
+    Not repaired by loosening the match: one letter of edit distance is exactly
+    the licence that lets 'DESPACHO CONGRESAL' become a member. Reported instead,
+    so a second case fails the self-check rather than reaching a page.
+    """
+    seen, out = {}, []
+    for l in con.execute("SELECT id, full_name FROM legislator ORDER BY id"):
+        # Collapse doubled letters: 'rosangella' -> 'rosangela'. Loose enough to
+        # catch the spelling variants the two chambers publish, tight enough that
+        # no two actual members have ever collided under it.
+        key = tuple(sorted(re.sub(r"(.)\1+", r"\1", t) for t in norm(l["full_name"])))
+        if key in seen and seen[key] != l["id"]:
+            out.append((seen[key], l["id"]))
+        seen.setdefault(key, l["id"])
+    # Only a real problem where both halves actually carry spend.
+    spent = {r[0] for r in con.execute(
+        "SELECT DISTINCT legislator_id FROM payroll WHERE legislator_id IS NOT NULL "
+        "UNION SELECT DISTINCT legislator_id FROM travel "
+        "WHERE legislator_id IS NOT NULL")}
+    return [(a, b) for a, b in out if a in spent and b in spent]
 
 
 def ingest_weeks(con):
@@ -316,13 +371,30 @@ def demo():
     assert not _rows(personal_url(2026, 7).replace(
         "ch_tipo_regimen=", "ch_tipo_regimen=7"), "Personal"), "congresistas in PTE?"
 
+    # One member is two padrón rows under two spellings, so her cost splits. Any
+    # second case is a new bug and must not reach a page silently.
+    split = split_despachos(con)
+    assert len(split) <= 1, split
+
     trips = viaticos(2026, 6)
     assert len(trips) == 770, len(trips)
     assert sum(1 for t in trips if resolve(legs, t["VC_VIATICOS_AREA"], 2021)) > 300
+    # All the money is in the _N columns, foreign trips included -- if the _E pair
+    # ever starts being populated, every total here is an undercount.
+    assert not [t for t in trips if float(t["DC_VIATICOS_TOTAL_E"] or 0)], "_E in use"
 
     ws = rep_weeks()
     assert len(ws) == 192, len(ws)          # 191 numbered; 103 is used twice
-    assert sum(1 for w in ws if not w["held"]) == 13, "suspension count moved"
+    assert max(w["n"] for w in ws) == 191, "calendar grew -- new period?"
+    # Two different ways of not happening, counted apart because they are: a week
+    # SUSPENDIDA was called off, one marked NO SE REALIZÓ was never convened.
+    susp = [w for w in ws if "SUSPEND" in w["raw"].upper()]
+    assert len(susp) == 13, len(susp)
+    assert sum(1 for w in ws if not w["held"]) == 45, "held flag moved"
+    # Five held weeks are prose we deliberately do not parse: enumerated day lists
+    # ("Durante los días jueves 22, viernes 23, lunes 26..."), one "A partir del"
+    # with no end, and one with no year at all. They keep `raw` and a NULL range.
+    assert sum(1 for w in ws if w["held"] and not w["starts_on"]) == 5, "date parse moved"
     typo = [w for w in ws if w["n"] == 187][0]
     assert "2036" in typo["raw"] and typo["starts_on"] == "2026-03-23", typo
     print(f"ok: {len(rows)} en planilla ({len(hit)} despachos resueltos), "

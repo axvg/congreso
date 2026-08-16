@@ -20,6 +20,7 @@ python3 -m ingest.run expedientes  # dossiers: timeline, committees, documents
 python3 -m ingest.run votes        # roll-call PDFs + diario de debates + attendance
 python3 -m ingest.run textos       # the filed text of each bill, from its PDF
 python3 -m ingest.run comisiones   # nómina de la Cámara + mesas directivas del Senado
+python3 -m ingest.run gastos       # planilla y viajes por despacho + semanas de rep.
 python3 -m ingest.run status       # counts and coverage
 python3 -m ingest.photos           # 190 retratos -> assets/photos/ (una vez)
 
@@ -82,6 +83,9 @@ wrong vote row is worse than a missing one.
 | Legislators | `GET {diputados,senado}.congreso.gob.pe/wp-json/wp/v2/{diputado,senador}` |
 | Roll calls, diarios | `GET /wp-json/wp/v2/media?per_page=100` on both chamber hosts |
 | Enacted law | `GET api.congreso.gob.pe/adlp-visor-service/ley/leyes?nroley1=&nroley2=` |
+| Despacho payroll | `GET transparencia.gob.pe/personal/pte_transparencia_personal_genera.aspx?id_entidad=16&…&ch_tipo_descarga=3` |
+| Viáticos y pasajes | `GET transparencia.gob.pe/contrataciones/pte_transparencia_contrataciones_genera.aspx?id_entidad=16&…&formato=xml` |
+| Semanas de representación | `GET www3.congreso.gob.pe/semana-representacion/` |
 | Committees, by id | `GET /spley-portal-service/comisiones` + `/periodo-parlamentario/2026/filtros?codTipoParl=D` |
 | Mesas directivas | `GET senado.congreso.gob.pe/wp-json/wp/v2/pages?slug=mesas-directivas-y-horarios-de-sesiones-de-las-comisiones-parlamentarias` |
 
@@ -114,6 +118,66 @@ self-consistent, so `parsed=1` requires the diario where one exists.
 
 There is no shared id between the chamber websites and the bills API; the join
 is normalised names, 190/190 for the current period.
+
+## What a congresista costs
+
+The Congress publishes nothing about this. It never published gastos operativos
+per member — the only instance in the whole Wayback record for the domain is a
+JPEG a congresista put on his own page in 2012 — and the bicameral reglamentos in
+force since 27/07/2026 deleted even the *obligation to liquidate* them. Old art.
+22 f) required a monthly rendición to Tesorería with at least 30% backed by
+receipts; RLC 004/005/006-2025-2026-CR do not contain the phrase at all.
+
+What is public and machine-readable is the Portal de Transparencia Estándar,
+entity 16 — plain GETs returning CSV/XML, no captcha, no session, no cookies. It
+gives two of the four cost components, and `ingest/gastos.py` takes both:
+
+- **planilla del despacho** — every staffer, monthly, with the member named in
+  `VC_PERSONAL_DEPENDENCIA`. 6–8 people per despacho, S/35.5k–52.2k a month.
+- **viáticos y pasajes** — per trip, per despacho. The one figure with real
+  spread: S/430 to S/136,892 over 2025. Do not trust its `kind`: PTE labels it
+  "Viajes nacionales / internacionales" and it was that through 2025, but from
+  2026 the Congress flags most domestic trips internacional too. `route` is the
+  only honest test. The source's exterior money columns are zero in all 67
+  months — foreign trips file in the domestic ones.
+
+It does **not** give the member's own pay. Régimen 7 "Altos Funcionarios" is
+empty for entity 16 in every month ever sampled, back to 2015. That number, and
+the asignación por función congresal, are uniform statutory amounts — and the
+acuerdo that last set the asignación (118-2023-2024/MESA-CR) updates it "por el
+Índice de Precios al Consumidor" without printing a figure, which lives in an
+unpublished informe. They are a constant, so they belong in one explainer, not on
+190 pages. A per-member page showing the same number 190 times is not data.
+
+Three traps here too:
+
+6. **Take the XML, not the CSV.** `VC_PERSONAL_DEPENDENCIA` holds raw newlines in
+   an unquoted field: July 2026 is 4,138 lines for 4,051 records, so a naive
+   parse shears ~2% of the payroll in half without erroring.
+7. **The despacho join must be an exact token-multiset match.** A subset match
+   maps the área `DESPACHO CONGRESAL` onto a member. 22 people sit in the padrón
+   twice, once per period, so the month's `per_par` breaks the tie — otherwise a
+   2021-2026 despacho resolves to a 2026-2031 seat. 127/127 resolve for 2026-07.
+8. **~40% of both tables is institutional, not anybody's cost** — comisiones,
+   Parlamento Andino, áreas administrativas, and the staff of three
+   ex-presidents of the Republic. Those rows keep `legislator_id NULL`. Dividing
+   them across the padrón to reach a rounder number would be an invention.
+9. **One human is two rows in the padrón.** The Cámara publishes "Barbaran
+   Reyes, Rosangela Andrea" for 2026-2031 and the 2021-2026 roster has
+   "Barbarán Reyes, Rosangella Andrea"; PTE uses both, so her cost splits across
+   two ids and one half reads S/14,774 for a year instead of ~S/600,000. Not
+   patched by loosening the join — one letter of edit distance is precisely the
+   licence that turns `DESPACHO CONGRESAL` into a member. `gastos.split_despachos`
+   reports it and `demo()` fails on a second case.
+
+`rep_week` is the denominator: the 191 semanas de representación, Oct 2009 to Jul
+2026, so travel can be "went in 9 of 11 weeks" and not just a pile of soles. Two
+of its quirks are load-bearing and are stored, not corrected: week 103 is used
+twice (ABRIL and MAYO 2018), so the number is not a key; and week 187 reads "de
+marzo de 2036" for a 2026 week, kept verbatim in `raw` with the fix recorded in
+`note`. Expect a hole in travel for 1 Jan – 12 Apr 2026: Acuerdo
+083-2025-2026/MESA-CR suspended 21 benefit acuerdos over the campaign. That is a
+legal suspension, not thrift.
 
 ## Not available
 
