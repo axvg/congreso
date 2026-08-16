@@ -362,8 +362,8 @@ def num(n):
 # The colour is OURS, not the party's. Six real party colours cannot be a legal
 # categorical palette — two of these logos are green, two are red — so the
 # colours come from a validated ramp and the logo carries the party's own brand.
-# Where the two agree (RP cyan->blue, FP orange, JP green->teal) the slot was
-# chosen to agree.
+# Where the two agree (JP verde, RP celeste->azul, FP naranja->latón) the slot
+# was chosen to agree.
 #
 # Slots run in the order the palette was validated in, and the hemicycle seats
 # benches around the arc in that same order, so the only bench colours that ever
@@ -375,49 +375,45 @@ def num(n):
 # this comment recited a run of six luminance steps per mode that the palette
 # has never had. What is actually there, as relative luminance in slot order:
 #
-#     light  .161  .100  .243  .075  .245  .179
-#     dark   .147  .236  .282  .151  .275  .187
+#     light  .087 .161 .255 .071 .277 .132
+#     dark   .164 .220 .287 .145 .315 .193
 #
 # — two rows demo() reads back out of this comment and recomputes, so they
 # cannot go stale again. In greyscale the weakest pair that actually touches on
-# the arc is 1.29:1 in light and 1.16:1 in dark (gp2·gp3); dark used to be
-# 1.02:1, two benches that were literally the same grey, and gp1 was re-picked
-# to end that.
+# the arc is 1.44:1 in light and 1.25:1 in dark. The previous ramp managed
+# 1.29:1 and 1.16:1 and its comment argued at length that ~1.13:1 was an
+# arithmetic ceiling in dark; it is not, and what was actually missing was
+# spread: letting the six sit at deliberately different lightnesses inside the
+# validator's band buys separation in every channel at once — greyscale, CVD
+# and normal vision — at the cost of the six not being equally salient, which
+# for six contiguous blocks on an arc is a cost worth paying.
 #
-# It will not get much better than 1.16 and the reason is arithmetic, not
-# effort: the validator's dark band is OKLab L 0.48–0.67, so six hues have
-# 0.124–0.282 of relative luminance to share out, and five even steps inside
-# that range are ~1.13:1 each. A dark palette cannot be both a legible ladder
-# and six equally salient categories. So the arc does not ask anyone to tell
-# two greys apart: every bench boundary is a dashed rule with the bench's
-# monogram beside it, and every legend entry carries the logo and the name.
-# What the colours DO have to do is clear 3:1 against the surface they are
-# painted on — which is --ground, the page, not --raised, the card, and that is
-# what an earlier validation got wrong.
-#
-#   validate_palette.js "#008058,#3355A7,#CB6F2E,#5E3A91,#D2657D,#8F7200"
-#        --mode light --surface "#F7F4EF"   -> adjacent pairs PASS,
-#        worst adjacent CVD ΔE 11.6, normal-vision 18.7, contrast all >= 3:1
-#        (--gp5 was #DD6F86: 2.86:1 on --ground, a fail this catches now)
-#   validate_palette.js "#087A5C,#6384CE,#CB7E4D,#7B5EAA,#CF7486,#8E7600"
-#        --mode dark --surface "#14100E"    -> adjacent pairs PASS,
-#        worst adjacent CVD ΔE 12.9, normal-vision 17.8, tritan 9.7 (3.8 with
-#        the old --gp1), contrast all >= 3:1
+#   validate_palette.js "#016129,#4170B6,#B77F31,#63348E,#029FAB,#9C4A74"
+#        --mode light --surface "#FAFAF8"   -> ALL CHECKS PASS,
+#        worst adjacent CVD ΔE 11.4 (deutan), normal-vision 22.6, chroma floor
+#        clear, lightness band clear, contrast all >= 3:1 (--gp5 3.07:1 is the
+#        tightest, and it is measured on --ground, the page, not on --raised)
+#   validate_palette.js "#2D8046,#4581D9,#BF873A,#8058AB,#12A8B6,#B55C89"
+#        --mode dark --surface "#12161A"    -> ALL CHECKS PASS, with the CVD
+#        check at WARN: worst adjacent ΔE 7.8 (deutan), normal-vision 22.6.
+#        7.8 sits in the 6–8 band the validator allows only WITH a second
+#        encoding, and BENCH_SHAPE is that second encoding.
 #
 # The arc order was chosen by measuring all fifteen pairs in both modes and
-# taking the path that maximises the weakest neighbouring pair (11.2 -> 12.9).
+# taking the path that maximises the weakest neighbouring pair, subject to the
+# three slots where our colour and the party's own brand agree staying put.
 #
-# AND THAT IS WHERE THE OLD CLAIM STOPPED, ONE CHECK SHORT. Adjacent pairs are
-# five of fifteen. Run the same validator with `--pairs all` and it FAILS, in
-# both modes and for any six hues:
+# AND THE OLD CLAIM STOPPED ONE CHECK SHORT, so this one does not. Adjacent
+# pairs are five of fifteen. Run the same validator with `--pairs all`:
 #
-#        light   worst all-pairs CVD ΔE 3.4 (protanopía), normal vision 9.0
-#        dark    worst all-pairs CVD ΔE 7.1 (protanopía), normal vision 8.6
-#        greyscale, worst of fifteen: 1.01:1 light, 1.02:1 dark
+#        light   worst all-pairs CVD ΔE 11.3, normal vision 14.1
+#        dark    worst all-pairs CVD ΔE 7.7, normal vision 11.4
+#        greyscale, worst of fifteen: 1.07:1 light, 1.08:1 dark
 #
-# Not a picking problem: the validator's OWN reference ramp scores 3.2 on the
-# same test and fails contrast on four of its six besides. Six categorical hues
-# inside a usable lightness band do not separate on fifteen pairs. demo() ports
+# Light now clears the all-pairs CVD floor of 8 by a wide margin and misses the
+# normal-vision floor of 15 by 0.9; dark clears neither. The previous ramp
+# scored 3.4 and 7.1 on that same test, and the validator's own reference ramp
+# scores 3.2, so this is a real improvement and still not a pass. demo() ports
 # the validator's arithmetic — Machado (2009) on linear RGB, ΔE in OKLab ×100 —
 # and recomputes those six numbers on every build, so this block cannot go back
 # to claiming a pass it never had.
@@ -521,52 +517,65 @@ def bench_logo(party, r="", size=26, cls=""):
 # ----------------------------------------------------------------------- CSS
 
 CSS = """
-/* Three families of colour, kept apart on purpose.
-   · shell    — ground/raised/ink/muted/line/accent: the page itself.
-   · estado   — si/no/abst/aus: what a vote or a stage MEANS. Reserved: never
-                reused as a series colour.
-   · bancada  — gp1..gp6: WHO. Validated as a categorical ramp; see BENCH.
-   Every colour is declared on bare :root first, so no value exists only inside
-   a media query. */
-/* Three families of colour, kept apart on purpose.
-   · shell    — ground/raised/ink/muted/line/accent: the page itself.
-   · estado   — si/no/abst/aus/lic/pres/vio: what a vote or a stage MEANS.
-                Reserved: never reused as a series colour, and never the only
-                channel — every state ships with a word and a shape too.
-   · bancada  — gp1..gp6: WHO. A validated categorical ramp, see BENCH.
-   Every colour is declared on bare :root first, so no value exists only inside
-   a media query. */
+/* LA PALETA. El registro oficial, sobre papel bond, con luz fría.
+   Lo que había antes —crema #F7F4EF, titulares en Georgia y un rojo terracota—
+   es el tríptico que cualquier generador produce para cualquier encargo, y se
+   nombra a simple vista. Éste sale del material del asunto: el Diario de los
+   Debates impreso en bond casi blanco, el rojo institucional del Estado
+   peruano, y la piedra gris azulada del Palacio Legislativo. La escala neutra
+   es FRÍA de arriba abajo —tinta, texto secundario, filetes, superficies— y el
+   único calor de la página son dos acentos reservados: el rojo, que sólo
+   aparece donde habla la institución o donde hay que actuar, y un dorado sobrio
+   para lo que sigue en trámite. Dos temperaturas: eso es exactamente lo que le
+   faltaba al crema, donde todo era el mismo marrón claro.
+
+   Tres familias de color, separadas a propósito:
+   · shell    — ground/raised/sunk/ink/muted/off/line/accent/gold: la página.
+   · estado   — si/no/abst/blanco/aus/lic/pres, más ok/wait/dead/sen/vio para
+                las etapas del trámite: lo que una votación o una etapa
+                SIGNIFICA. Reservados: nunca se reutilizan como color de serie,
+                y nunca van solos — cada estado lleva además su palabra y su
+                figura. Además son texto de 13 px en las fichas, así que los
+                catorce miden 4.5:1 o más contra --ground Y contra --raised en
+                los dos temas; ese techo es lo que impide una escalera más
+                ancha, y es la razón por la que el intento anterior falló.
+   · bancada  — gp1..gp6: QUIÉN. Rampa categórica validada, ver BENCH.
+   Todo valor se declara primero en el bloque raíz a secas, así que ningún
+   color existe sólo dentro de una media query. */
 :root{
-  --ground:#F7F4EF; --raised:#FFFDFA; --ink:#171310; --muted:#6E655C;
-  --line:#E2DAD0; --accent:#9E2B32; --ok:#2F6B62; --wait:#8A5E0B; --dead:#6E655C;
-  --sen:#2F4A6B; --dip:#9E2B32; --sunk:#F0EAE1; --shade:#00000010;
-  --gp1:#008058; --gp2:#3355A7; --gp3:#CB6F2E;
-  --gp4:#5E3A91; --gp5:#D2657D; --gp6:#8F7200; --gp0:#6E655C;
-  --si:#1F6B4A; --no:#A4302C; --abst:#7F5A0A; --aus:#6E655C;
-  --lic:#2F4A6B; --pres:#5A4FA0; --vio:#5A4FA0;
-  /* every one of these is a fill on --ground, so 3:1 is measured there:
-     --gp5 3.25:1 (was #DD6F86, 2.86) and --off 3.30:1 (was #9E9286, 2.77) */
-  --grid:#D8CFC4; --off:#8F8578;
+  --ground:#FAFAF8; --raised:#FFFFFF; --sunk:#EDEFF1; --line:#D8DDE1;
+  --ink:#20262B; --muted:#525E68; --off:#78848D; --shade:#0000000D;
+  --accent:#A6192E; --gold:#8A6A22;
+  --ok:#1F6B4F; --wait:#8A6A22; --dead:#5D6870;
+  --sen:#2E5079; --dip:#A6192E; --vio:#5A4A9E; --grid:#CFD5DA;
+  --si:#1B6B47; --no:#A32A2A; --abst:#7A5A12; --blanco:#41636E;
+  --aus:#5D6870; --lic:#2E5079; --pres:#5A4A9E;
+  /* cada gp es un relleno sobre --ground, así que el 3:1 se mide ahí:
+     el más ajustado es --gp5 con 3.07:1 y --gp3 con 3.30:1 */
+  --gp1:#016129; --gp2:#4170B6; --gp3:#B77F31;
+  --gp4:#63348E; --gp5:#029FAB; --gp6:#9C4A74; --gp0:#525E68;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --ground:#14100E; --raised:#1E1917; --ink:#EDE7DF; --muted:#9E948A;
-  --line:#332B27; --accent:#D4636A; --ok:#6FB3A4; --wait:#D9A046; --dead:#8C8279;
-  --sen:#7FA3CC; --dip:#D4636A; --sunk:#191413; --shade:#FFFFFF0D;
-  --gp1:#087A5C; --gp2:#6384CE; --gp3:#CB7E4D;
-  --gp4:#7B5EAA; --gp5:#CF7486; --gp6:#8E7600; --gp0:#9E948A;
-  --si:#4FA97F; --no:#DE6F6B; --abst:#CE9B33; --aus:#8C8279;
-  --lic:#7FA3CC; --pres:#A99BE8; --vio:#A99BE8;
-  --grid:#3A312C; --off:#6E655C;
+  --ground:#12161A; --raised:#1A2026; --sunk:#161B20; --line:#2C343B;
+  --ink:#E6EAED; --muted:#9AA6B0; --off:#6E7A84; --shade:#FFFFFF0D;
+  --accent:#E8737E; --gold:#D2A64B;
+  --ok:#5FB394; --wait:#D2A64B; --dead:#8B959D;
+  --sen:#7FA3D6; --dip:#E8737E; --vio:#A79BEA; --grid:#333C44;
+  --si:#4FB187; --no:#EE7A7A; --abst:#D3A33C; --blanco:#93B3BD;
+  --aus:#8B959D; --lic:#7FA3D6; --pres:#A79BEA;
+  --gp1:#2D8046; --gp2:#4581D9; --gp3:#BF873A;
+  --gp4:#8058AB; --gp5:#12A8B6; --gp6:#B55C89; --gp0:#9AA6B0;
 }}
 :root[data-theme="dark"]{
-  --ground:#14100E; --raised:#1E1917; --ink:#EDE7DF; --muted:#9E948A;
-  --line:#332B27; --accent:#D4636A; --ok:#6FB3A4; --wait:#D9A046; --dead:#8C8279;
-  --sen:#7FA3CC; --dip:#D4636A; --sunk:#191413; --shade:#FFFFFF0D;
-  --gp1:#087A5C; --gp2:#6384CE; --gp3:#CB7E4D;
-  --gp4:#7B5EAA; --gp5:#CF7486; --gp6:#8E7600; --gp0:#9E948A;
-  --si:#4FA97F; --no:#DE6F6B; --abst:#CE9B33; --aus:#8C8279;
-  --lic:#7FA3CC; --pres:#A99BE8; --vio:#A99BE8;
-  --grid:#3A312C; --off:#6E655C;
+  --ground:#12161A; --raised:#1A2026; --sunk:#161B20; --line:#2C343B;
+  --ink:#E6EAED; --muted:#9AA6B0; --off:#6E7A84; --shade:#FFFFFF0D;
+  --accent:#E8737E; --gold:#D2A64B;
+  --ok:#5FB394; --wait:#D2A64B; --dead:#8B959D;
+  --sen:#7FA3D6; --dip:#E8737E; --vio:#A79BEA; --grid:#333C44;
+  --si:#4FB187; --no:#EE7A7A; --abst:#D3A33C; --blanco:#93B3BD;
+  --aus:#8B959D; --lic:#7FA3D6; --pres:#A79BEA;
+  --gp1:#2D8046; --gp2:#4581D9; --gp3:#BF873A;
+  --gp4:#8058AB; --gp5:#12A8B6; --gp6:#B55C89; --gp0:#9AA6B0;
 }
 /* LA ESCALA TIPOGRÁFICA. Nueve pasos y ni uno más:
      11 · 12.5 · 13.5 · 16 · 17 · 20 · 24 · 30 · 40
@@ -593,36 +602,58 @@ a:hover{border-bottom-color:var(--accent);color:var(--accent)}
    which is 900, and that put an 11/900 and a 13.5/700 on the page next to the
    11/600 and 13.5/600 they were supposed to match. */
 b,strong{font-weight:600}
-h1,h2,h3{font-family:ui-serif,Georgia,"Times New Roman",serif;font-weight:600;
-  text-wrap:balance;margin:0}
-h1{font-size:clamp(24px,4.2vw,40px);letter-spacing:-.018em;line-height:1.14}
+/* SIN SERIFA, EN NINGÚN SITIO. Los titulares iban en Georgia, que junto al
+   fondo crema y al rojo terracota completaba el tríptico que delata a una
+   página generada. Aquí el display es la misma grotesca del sistema apretada
+   de prosa (-.03em en el h1), y todo lo que es CIFRA o RÓTULO —los números
+   grandes, las iniciales de un retrato que falta, la marca del sitio— va en
+   monoespaciado. Ése es el idioma de un padrón, de un acta y de un
+   expediente, que es lo que este sitio es, y no el de una revista. */
+h1,h2,h3{font-family:inherit;font-weight:600;text-wrap:balance;margin:0}
+h1{font-size:clamp(24px,4.2vw,40px);letter-spacing:-.03em;line-height:1.14}
 /* A 91-character all-caps official title set at 40px is four lines of shouting.
    Long headlines step down to the second level of the scale instead. At 27px it
    was exactly the size of the stat value three blocks below it — two different
    things at one size is not a hierarchy — so it sits a step lower and the stat
    value a step higher. */
-h1.long{font-size:clamp(20px,2.6vw,24px);line-height:1.26;letter-spacing:-.006em}
+h1.long{font-size:clamp(20px,2.6vw,24px);line-height:1.26;letter-spacing:-.016em}
 /* h2 has to stay under h1.long's FLOOR, not under h1's ceiling: 82% of these
    pages have a long title, and a fixed 24px h2 was bigger than its own page
    title at every width below 810px — no first level of hierarchy at all on a
    phone. h1.long floors at 20px and h2 at 17px, and h2 only reaches 20px at
    1053px wide, where h1.long is already 24. */
 h2{font-size:clamp(17px,1.9vw,20px);margin:0 0 16px;padding-bottom:9px;
-  border-bottom:1px solid var(--line);letter-spacing:-.008em}
-h3{font-size:17px;letter-spacing:-.004em}
+  border-bottom:1px solid var(--line);letter-spacing:-.018em}
+h3{font-size:17px;letter-spacing:-.014em}
 .h4{font:600 13.5px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.14em;
   text-transform:uppercase;color:var(--muted);margin:0 0 10px}
 p{margin:0 0 12px;max-width:70ch}
 .wrap{max-width:1040px;margin:0 auto;padding:20px clamp(14px,3.5vw,28px) 64px}
+/* El rótulo va en el dorado sobrio, no en el rojo: el rojo institucional se
+   reserva para lo que la institución decide y para lo que se puede pulsar. */
 .eyebrow{font:600 11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;
-  letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+  letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
 .mut{color:var(--muted)}
 .sm{font-size:13.5px}
-/* Eight links wrapped to three rows on a phone: 137px of sticky chrome, 17% of
-   the screen, on every page, above every headline. The links live in their own
-   sideways scroller now — one 45px row — and the theme toggle stays pinned
-   outside it, so nothing walks off-screen and the page still has no horizontal
-   overflow of its own. */
+/* LA NAVEGACIÓN, COMO ARQUITECTURA Y NO COMO BARRA.
+   Ocho destinos plegaron a tres filas primero y a un scroller lateral después.
+   El scroller no mentía —el degradado decía que había más— pero a 375 px seis
+   de los ocho seguían fuera de pantalla y sólo se llegaba a ellos arrastrando,
+   que no es un índice: es un cajón.
+   El arreglo no es de estilo. Los ocho destinos responden a tres preguntas
+   distintas, y agrupados por esa pregunta son 2 + 3 + 2:
+       Qué se propone     → Proyectos · Mociones
+       Quién lo hace      → Parlamentarios · Bancadas · Comisiones
+       Qué pasa en el Pleno → Votaciones · Asistencia
+   Por debajo de 900 px la barra lleva la marca y un <details> nativo que abre
+   ese índice completo, con los tres rótulos y una línea que dice para qué
+   sirve cada sitio: sin JavaScript, operable con teclado por ser <details>, y
+   con cada destino a un toque de 44 px. Por encima de 900 px caben los ocho en
+   una fila y el <details> desaparece; los grupos se marcan ahí con un filete
+   entre uno y otro. Sólo uno de los dos existe a cada ancho (`display:none`
+   saca al otro también del árbol de accesibilidad), así que ningún destino se
+   anuncia dos veces. La portada repite la misma agrupación en «Empezar por
+   aquí», que es la otra mitad del arreglo: las tareas viven en la página. */
 nav.top{position:sticky;top:0;z-index:30;background:var(--raised);
   border-bottom:1px solid var(--line);display:flex;flex-wrap:nowrap;
   align-items:center;gap:2px;padding:0 clamp(8px,3vw,20px)}
@@ -655,15 +686,48 @@ nav.top .links::-webkit-scrollbar{height:0}
   nav.top .links::-webkit-scrollbar{height:6px}
   nav.top .links::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}}
 nav.top .links>a{flex:none;white-space:nowrap;scroll-snap-align:start}
-@media(min-width:900px){nav.top .links{flex-wrap:wrap;overflow-x:visible;
-  background:none}}
-nav.top a,nav.top button{display:inline-flex;align-items:center;min-height:44px;
-  padding:0 12px;border:0;background:none;color:inherit;font:600 13.5px/1 system-ui,sans-serif;
-  cursor:pointer;border-bottom:2px solid transparent}
-nav.top a:hover,nav.top button:hover{color:var(--accent);border-bottom-color:var(--accent)}
-nav.top .brand{font-family:ui-serif,Georgia,serif;font-weight:600;font-size:16px;
-  letter-spacing:-.01em;margin-right:8px}
+nav.top .links .sep{flex:none;width:1px;height:18px;background:var(--line);
+  margin:0 7px}
+nav.top a,nav.top button,nav.top summary{display:inline-flex;align-items:center;
+  min-height:44px;padding:0 10px;border:0;background:none;color:inherit;
+  font:600 13.5px/1 system-ui,sans-serif;cursor:pointer;
+  border-bottom:2px solid transparent}
+nav.top a:hover,nav.top button:hover,nav.top summary:hover{color:var(--accent);
+  border-bottom-color:var(--accent)}
+nav.top .brand{font:600 16px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.01em;margin-right:4px;color:var(--ink);flex:none}
 nav.top button{flex:none;margin-left:auto}
+/* el índice desplegable: <details> nativo, sin una línea de JavaScript */
+nav.top .menu{flex:none;margin-left:auto}
+nav.top summary{list-style:none;gap:8px;white-space:nowrap}
+nav.top summary::-webkit-details-marker{display:none}
+nav.top summary::after{content:"";width:8px;height:8px;flex:none;
+  border:2px solid currentColor;border-width:0 2px 2px 0;
+  transform:rotate(45deg) translate(-2px,-2px)}
+nav.top .menu[open]>summary::after{transform:rotate(225deg) translate(-1px,-1px)}
+nav.top .menu[open]>summary{color:var(--accent);border-bottom-color:var(--accent)}
+nav.top .panel{position:absolute;left:0;right:0;top:100%;background:var(--raised);
+  border-bottom:1px solid var(--line);box-shadow:0 10px 24px var(--shade);
+  padding:8px clamp(8px,3vw,20px) 16px;max-height:calc(100vh - 46px);
+  overflow-y:auto;display:grid;gap:4px}
+nav.top .mh{display:block;font:600 11px/1.4 ui-monospace,Menlo,monospace;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--gold);
+  padding:14px 0 6px;border-bottom:1px solid var(--line);margin-bottom:2px}
+nav.top .panel a{display:flex;flex-direction:column;align-items:flex-start;
+  justify-content:center;gap:2px;min-height:52px;padding:8px 10px;
+  border-bottom:0;border-left:3px solid transparent;width:100%;
+  font:600 16px/1.3 system-ui,sans-serif;white-space:normal}
+nav.top .panel a small{font:400 13.5px/1.35 system-ui,sans-serif;
+  color:var(--muted)}
+nav.top .panel a:hover{background:var(--sunk);border-left-color:var(--accent);
+  border-bottom-color:transparent}
+nav.top .panel a:hover small{color:var(--muted)}
+/* Uno u otro, nunca los dos: `display:none` también saca el duplicado del
+   árbol de accesibilidad, así que ningún destino se lee dos veces. El
+   scroller y sus sombras siguen ahí por encima de 900 px como red de
+   seguridad para la franja 900–1000, donde los ocho van justos. */
+@media(max-width:899px){nav.top .links{display:none}}
+@media(min-width:900px){nav.top .menu{display:none}}
 .crumb{font:12.5px/1.5 ui-monospace,Menlo,monospace;color:var(--muted);margin:18px 0 10px;
   word-break:break-word}
 .crumb a{border:0}
@@ -705,12 +769,34 @@ a.bchip:hover{border-bottom-color:currentColor}
   border-radius:4px;flex:none}
 .shot{position:relative;overflow:hidden}
 .shot>i{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  color:var(--muted);font:600 16px/1 ui-serif,Georgia,serif;font-style:normal;
+  color:var(--muted);font:600 16px/1 ui-monospace,Menlo,monospace;font-style:normal;
   letter-spacing:.04em}
 .shot>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .noface{display:flex;align-items:center;justify-content:center;background:var(--sunk);
   border:1px solid var(--line);border-radius:4px;color:var(--muted);
-  font:600 16px/1 ui-serif,Georgia,serif;letter-spacing:.04em;flex:none}
+  font:600 16px/1 ui-monospace,Menlo,monospace;letter-spacing:.04em;flex:none}
+/* La cara dentro de una fila: 26×32. Declarado DESPUÉS de .face/.noface a
+   propósito — con la misma especificidad gana la última, y así fue como las
+   clases de figura del hemiciclo perdieron una vez. */
+.fmini{width:26px;height:32px;border-radius:3px}
+.fmini>i,.noface.fmini{font-size:11px;letter-spacing:.02em}
+/* Nombre + cara, la pieza que se repite en cuadros, coautorías y firmas */
+.pchip{display:inline-flex;align-items:center;gap:8px;min-height:44px;
+  padding:3px 12px 3px 4px;border:1px solid var(--line);border-radius:999px;
+  background:var(--raised);font:600 13.5px/1.25 system-ui,sans-serif;
+  max-width:100%;vertical-align:middle}
+/* El nombre va en tinta, nunca en el color de su bancada: --gp5 sobre blanco
+   mide 3.21:1 y esto es texto de 13.5 px. La bancada la dice el filete y el
+   logotipo, igual que en .bchip. */
+.pchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+  color:var(--ink)}
+.pchip.pl,.pchip.pl .nm{color:var(--muted);font-weight:400}
+a.pchip:hover{border-color:var(--accent);color:var(--accent)}
+a.pchip:hover .nm{color:var(--accent)}
+/* y los tres sitios cuyas reglas de «enlace = 44 px de alto» ganarían por
+   especificidad y lo devolverían a inline-block */
+.roll li a.pchip,.sign a.pchip,td a.pchip,#t td a.pchip{display:inline-flex;
+  padding:3px 12px 3px 4px;line-height:1.25;min-height:44px}
 /* --- hemiciclo ------------------------------------------------------------ */
 .hemi{display:block;width:100%;height:auto;max-width:660px;margin:0 auto;
   overflow:visible}
@@ -722,7 +808,7 @@ a.bchip:hover{border-bottom-color:currentColor}
   letter-spacing:.08em}
 .hemi .hole{fill:var(--muted);font-family:ui-monospace,Menlo,monospace;
   font-weight:600;text-anchor:middle;letter-spacing:.1em;text-transform:uppercase}
-.hemi .holen{fill:var(--ink);font-family:ui-serif,Georgia,serif;font-weight:600;
+.hemi .holen{fill:var(--ink);font-weight:600;letter-spacing:-.01em;
   text-anchor:middle}
 /* On a phone a 10px seat cannot be a 44px tap target and never will be — 130
    of them need 250 000 px² and the viewport gives 94 000. So below 720px the
@@ -784,12 +870,12 @@ figcaption{color:var(--muted);font-size:13.5px;line-height:1.55;margin-top:10px;
 .people .ph{width:100%;aspect-ratio:4/5;background:var(--sunk);display:block;
   position:relative;overflow:hidden}
 .people .ph>i{position:absolute;inset:0;display:flex;align-items:center;
-  justify-content:center;color:var(--muted);font:600 20px/1 ui-serif,Georgia,serif;
+  justify-content:center;color:var(--muted);font:600 20px/1 ui-monospace,Menlo,monospace;
   font-style:normal}
 .people .ph>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
   display:block}
 .people .noph{width:100%;aspect-ratio:4/5;display:flex;align-items:center;justify-content:center;
-  background:var(--sunk);color:var(--muted);font:600 20px/1 ui-serif,Georgia,serif}
+  background:var(--sunk);color:var(--muted);font:600 20px/1 ui-monospace,Menlo,monospace}
 .people .cap{padding:9px 10px 11px;display:block}
 .people .nm2{display:block;font:600 13.5px/1.3 system-ui,sans-serif;color:var(--ink)}
 .people .sub{display:flex;align-items:center;gap:6px;margin-top:6px;color:var(--muted);
@@ -846,7 +932,7 @@ td.who2{padding:4px 12px}
 .bgrid .t2{flex:1;min-width:0}
 .bgrid .nm2{display:block;font:600 16px/1.25 system-ui,sans-serif;color:var(--ink)}
 .bgrid .sub{display:block;color:var(--muted);font-size:12.5px;margin-top:3px}
-.bgrid .big{font:600 30px/1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
+.bgrid .big{font:600 30px/1 ui-monospace,Menlo,monospace;letter-spacing:-.03em;font-variant-numeric:tabular-nums;
   color:currentColor}
 .bhead{display:flex;align-items:center;gap:18px;margin:6px 0 0}
 .bhead .eyebrow{display:block;margin-bottom:4px}
@@ -867,7 +953,7 @@ td.who2{padding:4px 12px}
 .strip{margin:0 0 20px}
 .strip .lab{margin:0 0 4px;color:var(--ink);font:600 13.5px/1.4 system-ui,sans-serif;
   display:flex;justify-content:space-between;gap:14px;align-items:baseline;max-width:640px}
-.strip .lab b{font:600 20px/1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums}
+.strip .lab b{font:600 20px/1 ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
 .strip svg{max-width:640px}
 .chart .pk{stroke:var(--muted);stroke-width:2}
 .chart .pkbar{fill:var(--muted)}
@@ -883,7 +969,7 @@ td.who2{padding:4px 12px}
 .tile{border:1px solid var(--line);border-radius:4px;background:var(--raised);padding:14px 15px}
 .tile dt{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
   text-transform:uppercase;color:var(--muted)}
-.tile dd{margin:6px 0 0;font:600 30px/1.05 ui-serif,Georgia,serif;
+.tile dd{margin:6px 0 0;font:600 30px/1.05 ui-monospace,Menlo,monospace;
   font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .tile dd small{display:block;font:400 12.5px/1.5 system-ui,sans-serif;color:var(--muted);
   letter-spacing:0;margin-top:5px}
@@ -891,7 +977,7 @@ td.who2{padding:4px 12px}
 .stat div{min-width:104px}
 .stat dt{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
   text-transform:uppercase;color:var(--muted)}
-.stat dd{margin:2px 0 0;font:600 30px/1.1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
+.stat dd{margin:2px 0 0;font:600 30px/1.1 ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;
   letter-spacing:-.02em}
 .stat dd small{font:400 12.5px/1.4 system-ui,sans-serif;color:var(--muted);display:block;
   letter-spacing:0}
@@ -946,9 +1032,13 @@ td.who2{padding:4px 12px}
 .who{display:flex;gap:14px;align-items:flex-start}
 .who img{width:64px;height:80px;object-fit:cover;border:1px solid var(--line);
   border-radius:2px;background:var(--sunk);flex:none}
-.who .nm{font-family:ui-serif,Georgia,serif;font-size:17px;font-weight:600;display:block}
+.who .nm{font-size:17px;font-weight:600;letter-spacing:-.012em;display:block}
 .roll{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px 10px}
-.roll li{font-size:13.5px}
+/* min-width:0 en el ítem flexible: sin esto «María de los Milagros Jackeline
+   Jauregui Martínez» no se encoge —el mínimo por defecto de un ítem flex es su
+   contenido— y sacaba la página 110 px a la derecha a 375. Con esto el nombre
+   se corta con puntos suspensivos dentro de su ficha. */
+.roll>li{font-size:13.5px;min-width:0;max-width:100%}
 .roll li a{display:inline-block;padding:11px 0;min-height:44px}
 .roll .rank{font:600 11px/1 ui-monospace,Menlo,monospace;color:var(--muted)}
 .scroll{overflow:auto;max-height:78vh;border:1px solid var(--line);border-radius:2px;
@@ -1036,13 +1126,16 @@ code{overflow-wrap:anywhere}
 .ranked .track{background:var(--sunk);border-radius:3px;height:14px;overflow:hidden;
   border:1px solid var(--line)}
 .ranked .track i{display:block;height:100%}
-.ranked .n{font:600 13.5px/1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
+.ranked .n{font:600 13.5px/1 ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;
   text-align:right}
 .ranked .pc{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;
   text-align:right}
 .feed{list-style:none;margin:0;padding:0}
-.feed li{padding:6px 0;border-bottom:1px solid var(--line)}
-.feed li:last-child{border-bottom:0}
+/* `>`, no descendiente: las fichas de firmantes son <li> dentro de un <li> de
+   .feed, y con `.feed li` cada una se llevaba el filete inferior de una fila
+   del listado. */
+.feed>li{padding:6px 0;border-bottom:1px solid var(--line)}
+.feed>li:last-child{border-bottom:0}
 .feed .t{display:block;font-size:16px;padding:9px 0;min-height:44px}
 /* el padrón: la marca de bancada al lado del nombre, no solo texto gris */
 .feed li>.rowmark{float:left;margin:11px 10px 0 0}
@@ -1071,9 +1164,14 @@ code{overflow-wrap:anywhere}
    etapa escrita —el color nunca va solo— y un título con medida de lectura.
    El estado que se repite en toda la página se dice una vez arriba y solo se
    imprime en las filas que se salen de él, que son las que hay que ver. */
-.feed li.r{display:grid;grid-template-columns:1fr;gap:0 14px;align-items:start;
-  padding:8px 0 10px 13px;border-left:3px solid currentColor}
-@media(min-width:520px){.feed li.r{grid-template-columns:92px 1fr}}
+/* minmax(0,1fr), no 1fr: el mínimo de una pista `1fr` es su contenido mínimo,
+   y un `.chip` con `white-space:nowrap` y cuarenta caracteres —«Publicada en el
+   Diario Oficial El Peruano»— ensanchaba la pista 3 px por encima del ancho de
+   la página a 375. Los rótulos largos de estado además se parten. */
+.feed li.r{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px;
+  align-items:start;padding:8px 0 10px 13px;border-left:3px solid currentColor}
+.feed li.r>.chip{white-space:normal}
+@media(min-width:520px){.feed li.r{grid-template-columns:92px minmax(0,1fr)}}
 .feed .stg{display:block;font:600 11px/1.4 ui-monospace,Menlo,monospace;
   letter-spacing:.1em;text-transform:uppercase;color:currentColor;
   padding-top:11px;overflow-wrap:anywhere}
@@ -1086,7 +1184,7 @@ code{overflow-wrap:anywhere}
   /* nada que alinear si toda la página está en el mismo estado: la columna de
      la etapa desaparece. Después de la regla de arriba a propósito — con la
      misma especificidad, gana la última, y así fue como esta perdió una vez. */
-  .feed.nostg li.r{grid-template-columns:1fr}
+  .feed.nostg li.r{grid-template-columns:minmax(0,1fr)}
   .feed.nostg li.r>*{grid-column:1}}
 /* la cabecera de grupo: lo que convierte 250 filas en un documento navegable */
 li.gh{display:flex;align-items:baseline;gap:12px;position:sticky;top:46px;
@@ -1131,6 +1229,53 @@ TOGGLE = ("<button onclick=\"var d=document.documentElement,"
           "aria-label=\"Cambiar tema claro u oscuro\">Tema</button>")
 
 
+# Los ocho destinos, agrupados por la pregunta que responde cada uno. Una sola
+# tabla: la barra ancha, el índice desplegable del móvil y el bloque «Empezar
+# por aquí» de la portada se generan de aquí, así que no pueden discrepar.
+NAV = (
+    ("Qué se propone", (
+        ("proyectos.html", "Proyectos de ley",
+         "Todo lo presentado, con la etapa en la que está cada expediente"),
+        ("mociones.html", "Mociones",
+         "Investigación, control político, declaraciones y saludos"))),
+    ("Quién lo hace", (
+        ("parlamentarios.html", "Parlamentarios",
+         "Los 190 escaños, con retrato, bancada y ficha de actividad"),
+        ("bancadas.html", "Bancadas",
+         "Las seis, con su tamaño, su unidad de voto y sus integrantes"),
+        ("comisiones.html", "Comisiones",
+         "Quién compone cada una y qué proyectos tiene en la mano"))),
+    ("Qué pasa en el Pleno", (
+        ("votaciones.html", "Votaciones",
+         "Cómo votó cada quien, nombre por nombre, en cada lista nominal"),
+        ("asistencia.html", "Asistencia",
+         "Quién estuvo en la sala en cada toma de asistencia"))),
+)
+
+
+def nav_html(r):
+    """La barra: la marca, los ocho destinos y el índice desplegable.
+
+    A ancho de teléfono sólo existe el <details>; a partir de 900 px sólo la
+    fila. Los dos salen de NAV, y la hoja de estilos oculta el que sobra.
+    """
+    row, first = [], True
+    for _label, dests in NAV:
+        if not first:
+            row.append('<i class="sep" aria-hidden="true"></i>')
+        first = False
+        row += [f'<a href="{r}{u}">{esc(t)}</a>' for u, t, _d in dests]
+    panel = "".join(
+        f'<span class="mh">{esc(label)}</span>'
+        + "".join(f'<a href="{r}{u}">{esc(t)}<small>{esc(d)}</small></a>'
+                  for u, t, d in dests)
+        for label, dests in NAV)
+    return (f'<nav class="top"><a class="brand" href="{r}index.html">Hemiciclo</a>'
+            f'<div class="links">{"".join(row)}</div>'
+            f'<details class="menu"><summary>Secciones</summary>'
+            f'<div class="panel">{panel}</div></details>{TOGGLE}</nav>')
+
+
 def logo_footer(body, r):
     """The credit for the marks this page actually paints.
 
@@ -1164,14 +1309,7 @@ def shell(title, body, depth=0, desc=""):
 <meta name="robots" content="noindex,nofollow">
 <meta name="description" content="{esc(desc)}">
 <style>{CSS}</style>{THEME}
-<nav class="top"><div class="links"><a class="brand" href="{r}index.html">Hemiciclo</a>
-<a href="{r}proyectos.html">Proyectos</a>
-<a href="{r}parlamentarios.html">Parlamentarios</a>
-<a href="{r}bancadas.html">Bancadas</a>
-<a href="{r}comisiones.html">Comisiones</a>
-<a href="{r}votaciones.html">Votaciones</a>
-<a href="{r}asistencia.html">Asistencia</a>
-<a href="{r}mociones.html">Mociones</a></div>{TOGGLE}</nav>
+{nav_html(r)}
 <div class="wrap">{body}
 <footer class="prov"><a href="{r}acerca.html">Acerca de este sitio: quién lo
 hace, de dónde sale cada dato y cómo pedir una corrección</a> &middot;
@@ -1287,6 +1425,40 @@ def avatar(L, w=48, h=60, cls="face", r=""):
                 f"{img}</span>")
     return (f'<span class="noface {cls}" style="{box};font-size:{step(w / 3):g}px" '
             f'aria-hidden="true">{ini}</span>')
+
+
+def face_mini(L, r=""):
+    """El retrato más pequeño que sirve: 26×32, para poner una cara al lado de
+    un nombre dentro de una fila.
+
+    Misma disciplina que avatar(): las iniciales van DETRÁS de la foto, así que
+    lo que se ve cuando no hay retrato —los 140 del Congreso anterior— es una
+    baldosa con letras y nunca un <img src=""> roto."""
+    ini = esc(initials(L["full_name"]) if L else "?")
+    img = photo_img(L, r, 26, 32, "26px") if L else ""
+    if img:
+        return (f'<span class="face shot fmini">'
+                f'<i aria-hidden="true">{ini}</i>{img}</span>')
+    return f'<span class="noface fmini" aria-hidden="true">{ini}</span>'
+
+
+def person_chip(L, r, name=None, cls=""):
+    """Una persona, anclada por su cara.
+
+    El sitio existe porque «una tabla de 130 nombres no se puede leer», y la
+    cara es el ancla más fuerte que tenemos; hasta ahora sólo la usaban la
+    ficha, el padrón y el autor principal de un proyecto. Esto la lleva a los
+    sitios donde una fila NOMBRA a alguien y no enseñaba nada: cuadros de
+    comisión, coautores, firmantes de una moción y lista nominal de una
+    votación.
+    """
+    # `name` llega ya escrito: la lista nominal de una votación lo reordena en
+    # el navegador y el texto tiene que ser el mismo que puso el servidor.
+    nm = esc(name if name is not None else nice_name(L["full_name"] if L else ""))
+    inner = f'{face_mini(L, r)}<span class="nm">{nm}</span>'
+    if L:
+        return f'<a class="pchip {cls}" href="{leg_url(r, L["slug"])}">{inner}</a>'
+    return f'<span class="pchip pl {cls}">{inner}</span>'
 
 
 # ------------------------------------------------------------------ hemiciclo
@@ -2474,14 +2646,18 @@ def render_bill(d, b):
         for s in co:
             L = s["leg"]
             if L:
+                # cara, logotipo de bancada y nombre: los tres canales que el
+                # resto del sitio ya usa, en la lista más repetida del corpus
                 items.append(
                     f'<li class="{gp(L["party"])}">'
-                    f'<a href="{leg_url(r, L["slug"])}">'
+                    f'<a class="pchip" href="{leg_url(r, L["slug"])}">'
+                    + face_mini(L, r)
                     + (bench_logo(L["party"], r, 22) if L["party"] else "")
-                    + f'<span>{esc(nice_name(L["full_name"]))}</span></a></li>')
+                    + f'<span class="nm">{esc(nice_name(L["full_name"]))}</span>'
+                      f'</a></li>')
             else:
-                items.append(f'<li><span class="pl">'
-                             f'{esc(nice_name(s["name_raw"]))}</span></li>')
+                items.append(
+                    f'<li>{person_chip(None, r, nice_name(s["name_raw"]))}</li>')
         # The 2021 members have no bench on record, so keying the split on a
         # NULL party printed a leading blank where a name should be.
         withb = [s["leg"] for s in named if s["leg"]["party"]]
@@ -3757,14 +3933,18 @@ hay nada que contar de ninguno: quiénes son está en
     # where sorting the column alphabetically means anything.
     order = sorted(POS, key=lambda k: POS[k][2])
     data = ",".join(
-        "[{},{},{},{},{},{},{}]".format(
+        # 7 y 8: iniciales y si tenemos retrato local. draw() reconstruye la
+        # misma cara que puso el servidor en lugar de perderla al reordenar.
+        "[{},{},{},{},{},{},{},{},{}]".format(
             _js(x["leg"]["full_name"] if x["leg"] else x["name_raw"]),
             _js(x["leg"]["slug"] if x["leg"] else ""),
             _js(row_party(x)),
             _js((x["leg"]["district"] if x["leg"] else "") or "—"),
             _js(pos(x["position"])[0]),
             order.index(x["position"]) if x["position"] in order else 9,
-            _js(SRC[x["source"]][0] if x["source"] in SRC else ""))
+            _js(SRC[x["source"]][0] if x["source"] in SRC else ""),
+            _js(initials(x["leg"]["full_name"] if x["leg"] else x["name_raw"])),
+            1 if x["leg"] and local_photo(x["leg"]["slug"]) else 0)
         for x in rows)
     # The bench table and the vote-colour table, handed to draw() so a re-sorted
     # row keeps the same logo and the same colour the server rendered.
@@ -3790,8 +3970,7 @@ hay nada que contar de ninguno: quiénes son está en
                 g = p
                 srv.append(f'<tr class="grp"><td colspan="4">{esc(p)}</td></tr>')
             nm = x["leg"]["full_name"] if x["leg"] else x["name_raw"]
-            cell = (f'<a href="{leg_url(r, x["leg"]["slug"])}">{esc(nm)}</a>'
-                    if x["leg"] else esc(nm))
+            cell = person_chip(x["leg"], r, nm)
             srv.append(
                 f'<tr><td><span class="vote {POS_CHIP.get(x["position"], "wait")}">'
                 f'<span class="dotmark"></span>{esc(pos(x["position"])[0])}</span>'
@@ -3822,6 +4001,14 @@ hay nada que contar de ninguno: quiénes son está en
 parlamentario. Pulse una cabecera para reordenar.</p>
 <script>
 var BL={bl_js},VC={{{vc_js}}};
+function face(x){{return '<span class="'+(x[8]
+  ?'face shot fmini"><i aria-hidden="true">'+esc(x[7])
+   +'</i><img loading="lazy" decoding="async" width="26" height="32" src="{r}photos/'
+   +x[1]+'-160.jpg" alt="Retrato oficial de '+esc(x[0])+'">'
+  :'noface fmini" aria-hidden="true">'+esc(x[7]))+"</span>";}}
+function pchip(x){{var i=face(x)+'<span class="nm">'+esc(x[0])+"</span>";
+ return x[1]?'<a class="pchip" href="{r}parlamentario/'+x[1]+'.html">'+i+"</a>"
+  :'<span class="pchip pl">'+i+"</span>";}}
 function blogo(p){{var b=BL[p];
  return '<span class="bl gp'+(b?b[0]:0)+'">'+(b
   ?'<span class="blogo" style="width:24px;height:24px"><img src="{r}logos/'+b[1]
@@ -3854,8 +4041,7 @@ function draw(){{
    h+='<tr class="grp"><td colspan="4">'+esc(g)+'</td></tr>';}}
   h+='<tr><td><span class="vote '+(VC[x[4]]||"wait")+'"><span class="dotmark"></span>'
    +esc(x[4])+"</span>"+(x[6]?' <span class="chip wait">'+esc(x[6])+"</span>":"")
-   +"</td><td>"+(x[1]
-   ?'<a href="{r}parlamentario/'+x[1]+'.html">'+esc(x[0])+"</a>":esc(x[0]))
+   +"</td><td>"+pchip(x)
    +'</td><td class="who2">'+blogo(x[2])+"</td><td>"+esc(x[3])+"</td></tr>";}});
  tb.innerHTML=h;
  cnt.textContent=rs.length+" de "+D.length+" parlamentarios mostrados.";
@@ -4422,10 +4608,12 @@ def diario_url(src):
 
 
 def mem_li(r, m, tag=""):
-    """One roster line: person (linked when they are in the padrón) + bancada."""
-    who = (f'<a href="{leg_url(r, m["leg"]["slug"])}">'
-           f'{esc(nice_name(m["leg"]["full_name"]))}</a>' if m["leg"]
-           else esc(nice_name(m["name_raw"])))
+    """One roster line: person (linked when they are in the padrón) + bancada.
+
+    Con su cara: un cuadro de comisión son doce nombres seguidos y era la misma
+    tabla ilegible que este trabajo existe para arreglar."""
+    who = person_chip(m["leg"], r,
+                      None if m["leg"] else nice_name(m["name_raw"]))
     bench = m["bench"] or (m["leg"] or {}).get("party")
     tag_html = f' <span class="rank">{esc(tag)}</span>' if tag else ""
     return f'<li>{who} {party_chip(bench, r)}{tag_html}</li>'
@@ -5319,10 +5507,11 @@ q.addEventListener("input",sync);sync();}})()
                          'de quien la presentó.</li>')
         for m in ms:
             sg = d["signers"].get(m["id"], [])
-            who = ", ".join(
-                (f'<a href="parlamentario/{s["leg"]["slug"]}.html">'
-                 f'{esc(nice_name(s["leg"]["full_name"]))}</a>' if s["leg"]
-                 else esc(nice_name(s["name_raw"]))) for s in sg[:1 if small else 3])
+            # Con cara. «Qué diputado la declaró» es la pregunta que trae a
+            # alguien a una moción, y hasta aquí la respuesta era texto gris.
+            who = "".join(
+                f'<li>{person_chip(s["leg"], "", None if s["leg"] else nice_name(s["name_raw"]))}</li>'
+                for s in sg[:1 if small else 3])
             keep = 1 if small else 3
             mrows.append(
                 f'<li class="r {tone}" id="m-{esc(m["id"])}">'
@@ -5330,8 +5519,11 @@ q.addEventListener("input",sync);sync();}})()
                 f'<span class="m">{esc(m["code"])} · '
                 f'{esc(CHAMBER_SHORT[m["chamber"]])} · {fecha(m["presented_on"])}</span>'
                 f'<span class="t">{esc(clip(m["summary"], 120 if small else 220))}</span>'
-                f'<div class="sm mut sign" style="margin-top:6px">Firman: {who}'
-                f'{" y " + str(len(sg) - keep) + " más" if len(sg) > keep else ""}</div>'
+                f'<div class="sm mut sign" style="margin-top:6px">Firman:'
+                f'<ul class="roll signers">{who}'
+                + (f'<li><span class="pl">y {len(sg) - keep} más</span></li>'
+                   if len(sg) > keep else "")
+                + '</ul></div>'
                 + (f'<span class="chip wait" style="margin-top:6px">'
                    f'{esc(m["status"] or "")}</span>' if len(seen_st) > 1 else "")
                 + "</li>")
@@ -5708,6 +5900,25 @@ enero y julio de cada año, que es cuando abren las legislaturas.
                            f'{esc(v["subject"] or v["id"])}</a></li>'
                            for v in d["votes"][:6]) + "</ul></section>")
 
+    # «Empezar por aquí»: los mismos tres grupos que el índice de la barra, con
+    # el tamaño real de cada destino al lado. Sale de NAV, así que no puede
+    # discrepar de la navegación ni quedarse con un destino menos.
+    sizes = {"proyectos.html": num(len(d["bills"])),
+             "mociones.html": num(len(d["motions"])),
+             "parlamentarios.html": num(len(d["legs"])),
+             "bancadas.html": str(len(BENCH_ORDER)),
+             "comisiones.html": num(len(d["cttes"])),
+             "votaciones.html": num(len(d["votes"])),
+             "asistencia.html": num(len(d["sesiones"]))}
+    start_here = "".join(
+        f'<div class="card"><span class="eyebrow">{esc(label)}</span>'
+        f'<ul class="toc" style="margin-top:6px">'
+        + "".join(f'<li><a href="{u}"><b>{esc(t)}</b> '
+                  f'<span class="mut sm">{sizes.get(u, "")}</span><br>'
+                  f'<span class="mut sm">{esc(dsc)}</span></a></li>'
+                  for u, t, dsc in dests)
+        + "</ul></div>" for label, dests in NAV)
+
     last = max((b["presented_on"] or "") for b in d["bills"]) if d["bills"] else today
     body = f"""<span class="eyebrow">Congreso de la República del Perú · 2026-2031</span>
 <h1>Qué está haciendo el Congreso ahora mismo</h1>
@@ -5724,14 +5935,11 @@ nombre de quien lo ocupa y enlaza a su ficha;
 <a href="bancadas.html">las seis bancadas, una por una</a>. El orden dentro de
 la sala es el de este sitio: el Congreso no publica el plano de curules.</p></section>
 
-<section><h2>Empezar por aquí</h2><div class="facets">
-<a href="parlamentarios.html">Busque a su parlamentario <b>{len(d["legs"])}</b></a>
-<a href="proyectos.html">Todos los proyectos de ley <b>{num(len(d["bills"]))}</b></a>
-<a href="votaciones.html">Cómo votó cada quien <b>{len(d["votes"])}</b></a>
-<a href="asistencia.html">Quién asiste al Pleno <b>{len(d["sesiones"])}</b></a>
-<a href="bancadas.html">Las bancadas <b>{len(BENCH_ORDER)}</b></a>
-<a href="comisiones.html">Comisiones <b>{len(d["cttes"])}</b></a>
-</div></section>
+<section><h2>Empezar por aquí</h2>
+<p class="sm mut" style="margin-bottom:16px">Todo el sitio cuelga de tres
+preguntas. Es la misma agrupación que abre el botón «Secciones» de arriba, para
+que la barra y la página digan lo mismo.</p>
+<div class="grid g3">{start_here}</div></section>
 <section><h2>Actividad del Congreso actual</h2>
 <dl class="tiles">
 <div class="tile"><dt>Proyectos presentados</dt><dd>{len(cur)}
@@ -6312,14 +6520,27 @@ def demo():
     assert themes[1] == themes[2], "los dos bloques oscuros ya no coinciden"
     for tok in themes:
         for k in [f"gp{i}" for i in range(1, 7)] + ["off"]:
-            assert _cr(tok[k], tok["ground"]) >= 3, \
-                f'--{k} {tok[k]}: {_cr(tok[k], tok["ground"]):.2f}:1 sobre --ground'
+            for surf in ("ground", "raised"):
+                assert _cr(tok[k], tok[surf]) >= 3, \
+                    f'--{k} {tok[k]}: {_cr(tok[k], tok[surf]):.2f}:1 sobre --{surf}'
         # .pager .on: 13 px sobre el acento, en 275 páginas
         assert _cr(tok["accent"], tok["ground"]) >= 4.5, \
             f'--accent {tok["accent"]}: {_cr(tok["accent"], tok["ground"]):.2f}:1 '
+        # Los colores de estado son relleno de escaño (3:1 bastaría) PERO
+        # también son texto de 13 px en `.chip`, `.vote` y `.stg`, así que el
+        # techo real es 4.5:1 — y sobre las DOS superficies, porque la misma
+        # ficha los pinta sobre la página y dentro de una tarjeta. Éste es el
+        # límite que hizo fracasar el intento anterior de una escalera más
+        # ancha, y por eso se mide en lugar de afirmarse.
+        for k in ("si", "no", "abst", "blanco", "aus", "lic", "pres",
+                  "ok", "wait", "dead", "sen", "vio", "gold", "muted"):
+            for surf in ("ground", "raised"):
+                assert _cr(tok[k], tok[surf]) >= 4.5, \
+                    f'--{k} {tok[k]}: {_cr(tok[k], tok[surf]):.2f}:1 sobre ' \
+                    f'--{surf}, y es texto de 13 px'
     assert "color:#fff" not in CSS, "texto blanco fijo: no se mide en los dos temas"
     # el peor par que se toca en el arco, en grises, en cada tema
-    for tok, floor in zip(themes, (1.29, 1.16, 1.16)):
+    for tok, floor in zip(themes, (1.44, 1.25, 1.25)):
         worst = min(_cr(tok[f"gp{i}"], tok[f"gp{i + 1}"]) for i in range(1, 6))
         assert round(worst, 2) >= floor, \
             f"peor par contiguo en grises {worst:.2f}:1, el comentario dice {floor}"
@@ -6501,10 +6722,10 @@ def demo():
     # («every check PASS») sobrevivió porque nadie la volvía a medir.
     src2 = pathlib.Path(__file__).read_text("utf-8")
     claim15 = re.search(
-        r"light\s+worst all-pairs CVD ΔE ([\d.]+) \(protanopía\), normal vision "
-        r"([\d.]+)\n#\s+dark\s+worst all-pairs CVD ΔE ([\d.]+) \(protanopía\), "
-        r"normal vision ([\d.]+)\n#\s+greyscale, worst of fifteen: ([\d.]+):1 "
-        r"light, ([\d.]+):1 dark", src2)
+        r"light\s+worst all-pairs CVD ΔE ([\d.]+), normal vision ([\d.]+)\n"
+        r"#\s+dark\s+worst all-pairs CVD ΔE ([\d.]+), normal vision ([\d.]+)\n"
+        r"#\s+greyscale, worst of fifteen: ([\d.]+):1 light, ([\d.]+):1 dark",
+        src2)
     assert claim15, "desapareció la medición de los quince pares"
     got15 = [f"{report[0][1]:.1f}", f"{report[0][2]:.1f}",
              f"{report[1][1]:.1f}", f"{report[1][2]:.1f}",
@@ -6526,6 +6747,30 @@ def demo():
     # todavía tiene contenido detrás, y con ratón vuelve la barra de scroll.
     assert "no-repeat local" in CSS and "@media(pointer:fine)" in CSS, \
         "el scroller de la navegación se quedó sin señal de que hay más"
+    # ...y el índice del teléfono: los ocho destinos, agrupados, sin JS y con
+    # cada uno a un toque. Se comprueba en el HTML generado, no en NAV.
+    dests = [u for _l, ds in NAV for u, _t, _d in ds]
+    assert len(dests) == 7 and len(set(dests)) == 7
+    nv = (OUT / "index.html").read_text().split("</nav>")[0]
+    for u in dests:
+        assert nv.count(f'href="{u}"') == 2, \
+            f"{u} no aparece una vez en la fila y otra en el índice"
+        assert (OUT / u).exists(), f"la navegación enlaza a {u}, que no existe"
+    for label, _ds in NAV:
+        assert f'class="mh">{esc(label)}' in nv, f"el índice perdió «{label}»"
+    assert "<details class=\"menu\"><summary>" in nv, \
+        "el índice del teléfono ya no es un <details> nativo"
+    # los dos juegos de enlaces nunca están visibles a la vez
+    assert "@media(max-width:899px){nav.top .links{display:none}}" in CSS \
+        and "@media(min-width:900px){nav.top .menu{display:none}}" in CSS, \
+        "la fila y el índice pueden mostrarse a la vez: destinos duplicados"
+    # y la portada agrupa igual que la barra
+    home0 = (OUT / "index.html").read_text().split("Empezar por aquí")[1] \
+        .split("</section>")[0]
+    for label, ds in NAV:
+        assert esc(label) in home0, f"la portada no agrupa por «{label}»"
+        for u, _t, _d in ds:
+            assert f'href="{u}"' in home0, f"«Empezar por aquí» no lleva a {u}"
 
     # ---- una escala, no una dispersión
     used = sorted({float(x) for m in re.finditer(

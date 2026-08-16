@@ -16,16 +16,16 @@ STATUS = ROOT / "status.json"
 
 CSS = """
 :root{
-  --ground:#F7F4EF; --raised:#FFFDFA; --ink:#171310; --muted:#6E655C;
-  --line:#E2DAD0; --accent:#9E2B32; --ok:#2F6B62; --wait:#B07219; --dead:#8A8178;
+  --ground:#FAFAF8; --raised:#FFFFFF; --ink:#20262B; --muted:#525E68;
+  --line:#D8DDE1; --accent:#A6192E; --ok:#1F6B4F; --wait:#8A6A22; --dead:#5D6870;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --ground:#14100E; --raised:#1E1917; --ink:#EDE7DF; --muted:#9E948A;
-  --line:#332B27; --accent:#D4636A; --ok:#6FB3A4; --wait:#D9A046; --dead:#6E655C;
+  --ground:#12161A; --raised:#1A2026; --ink:#E6EAED; --muted:#9AA6B0;
+  --line:#2C343B; --accent:#E8737E; --ok:#5FB394; --wait:#D2A64B; --dead:#8B959D;
 }}
 :root[data-theme="dark"]{
-  --ground:#14100E; --raised:#1E1917; --ink:#EDE7DF; --muted:#9E948A;
-  --line:#332B27; --accent:#D4636A; --ok:#6FB3A4; --wait:#D9A046; --dead:#6E655C;
+  --ground:#12161A; --raised:#1A2026; --ink:#E6EAED; --muted:#9AA6B0;
+  --line:#2C343B; --accent:#E8737E; --ok:#5FB394; --wait:#D2A64B; --dead:#8B959D;
 }
 *{box-sizing:border-box}
 body{
@@ -34,9 +34,8 @@ body{
   -webkit-font-smoothing:antialiased;
 }
 .wrap{max-width:960px;margin:0 auto;padding:clamp(24px,5vw,64px) clamp(18px,4vw,32px)}
-h1,h2,h3{font-family:ui-serif,Georgia,"Times New Roman",serif;font-weight:600;
-  text-wrap:balance;margin:0}
-h1{font-size:clamp(28px,4.4vw,42px);letter-spacing:-.015em;line-height:1.15}
+h1,h2,h3{font-family:inherit;font-weight:600;text-wrap:balance;margin:0}
+h1{font-size:clamp(28px,4.4vw,42px);letter-spacing:-.03em;line-height:1.15}
 h2{font-size:20px;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
 .eyebrow{font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
   letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
@@ -46,7 +45,7 @@ section{margin-bottom:40px}
 .metric{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 26px;
   background:var(--raised);border:1px solid var(--line);border-left:3px solid var(--accent);
   border-radius:2px;padding:20px 24px;margin-bottom:36px}
-.metric .big{font:600 clamp(38px,7vw,58px)/1 ui-serif,Georgia,serif;
+.metric .big{font:600 clamp(38px,7vw,58px)/1 ui-monospace,Menlo,monospace;
   font-variant-numeric:tabular-nums;letter-spacing:-.03em}
 .metric .label{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.14em;
   text-transform:uppercase;color:var(--muted)}
