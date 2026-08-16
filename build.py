@@ -27,7 +27,7 @@ OUT = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "site"
 PORTAL = "https://wb2server.congreso.gob.pe/spley-portal/#"
 MOCPORTAL = "https://wb2server.congreso.gob.pe/smociones-portal/#"
 API = "https://api.congreso.gob.pe/spley-portal-service"
-PER_PAGE = 250
+PER_PAGE = 150
 
 CHAMBER = {"D": "Cámara de Diputados", "S": "Senado", "C": "Congreso de la República"}
 EN = {"D": "la Cámara de Diputados", "S": "el Senado",
@@ -304,6 +304,47 @@ def median(xs):
     return xs[len(xs) // 2] if xs else 0
 
 
+# La escala tipográfica, en Python: los tamaños que se calculan a partir de una
+# caja (el monograma dentro de un mosaico de 76 px) también salen a la página, y
+# sin pasar por aquí meten un décimo y un undécimo tamaño que la hoja no tiene.
+TYPE_SCALE = (11, 12.5, 13.5, 16, 17, 20, 24, 30, 40)
+
+
+def step(px):
+    """El paso de la escala más cercano a `px`."""
+    return min(TYPE_SCALE, key=lambda s: abs(s - px))
+
+
+def clip(s, n, tail="…"):
+    """Shorten for display without ever cutting a word in half.
+
+    Every display truncation on this site goes through here, because showing
+    the site to somebody means sending them a link, and a link that previews as
+    «…LA AMPLIACIÓN DE LA INFRA» reads as broken software. A hard `s[:70]` did
+    exactly that to the <title> of 26% of the bill pages.
+
+    Also collapses whitespace: official titles arrive with newlines inside
+    them, and a <title> with a newline in it is not a title.
+    """
+    s = " ".join(str(s or "").split())
+    if len(s) <= n:
+        return s
+    # n+1 so a cut that lands exactly on a space keeps the last whole word; a
+    # single word longer than the budget is the one case that has to be cut.
+    cut = s[:n + 1]
+    cut = cut.rsplit(" ", 1)[0] if " " in cut else s[:n]
+    cut = cut.rstrip(" ,;:.·-—«(")
+    return (cut or s[:n]) + tail
+
+
+def short_title(code, title, n=64):
+    """What a shared link previews as: the identifier, then as much of the
+    title as fits on a word boundary. The code alone does not say what the
+    document is about; the title alone does not say which expediente it is."""
+    t = clip(title, n)
+    return f"{code} · {t}" if t else str(code)
+
+
 def num(n):
     """14864 -> '14 864'. Peru writes thousands with a space, and a comma here
     would collide with the commas inside bill titles."""
@@ -326,7 +367,9 @@ def num(n):
 #
 # Slots run in the order the palette was validated in, and the hemicycle seats
 # benches around the arc in that same order, so the only bench colours that ever
-# touch are the adjacent pairs the validator measured.
+# TOUCH are the adjacent pairs. That is not the same as the only pairs a reader
+# ever compares, which is all fifteen — see the measurement below, and
+# BENCH_SHAPE, which is the answer to it.
 #
 # The six are NOT a lightness ladder in slot order, and an earlier version of
 # this comment recited a run of six luminance steps per mode that the palette
@@ -353,16 +396,37 @@ def num(n):
 # what an earlier validation got wrong.
 #
 #   validate_palette.js "#008058,#3355A7,#CB6F2E,#5E3A91,#D2657D,#8F7200"
-#        --mode light --surface "#F7F4EF"   -> every check PASS,
+#        --mode light --surface "#F7F4EF"   -> adjacent pairs PASS,
 #        worst adjacent CVD ΔE 11.6, normal-vision 18.7, contrast all >= 3:1
 #        (--gp5 was #DD6F86: 2.86:1 on --ground, a fail this catches now)
 #   validate_palette.js "#087A5C,#6384CE,#CB7E4D,#7B5EAA,#CF7486,#8E7600"
-#        --mode dark --surface "#14100E"    -> every check PASS,
+#        --mode dark --surface "#14100E"    -> adjacent pairs PASS,
 #        worst adjacent CVD ΔE 12.9, normal-vision 17.8, tritan 9.7 (3.8 with
 #        the old --gp1), contrast all >= 3:1
 #
 # The arc order was chosen by measuring all fifteen pairs in both modes and
 # taking the path that maximises the weakest neighbouring pair (11.2 -> 12.9).
+#
+# AND THAT IS WHERE THE OLD CLAIM STOPPED, ONE CHECK SHORT. Adjacent pairs are
+# five of fifteen. Run the same validator with `--pairs all` and it FAILS, in
+# both modes and for any six hues:
+#
+#        light   worst all-pairs CVD ΔE 3.4 (protanopía), normal vision 9.0
+#        dark    worst all-pairs CVD ΔE 7.1 (protanopía), normal vision 8.6
+#        greyscale, worst of fifteen: 1.01:1 light, 1.02:1 dark
+#
+# Not a picking problem: the validator's OWN reference ramp scores 3.2 on the
+# same test and fails contrast on four of its six besides. Six categorical hues
+# inside a usable lightness band do not separate on fifteen pairs. demo() ports
+# the validator's arithmetic — Machado (2009) on linear RGB, ΔE in OKLab ×100 —
+# and recomputes those six numbers on every build, so this block cannot go back
+# to claiming a pass it never had.
+#
+# So the fix is a channel, not a hue: BENCH_SHAPE gives every bench its own
+# silhouette, drawn by the same `mark()` in the seat and in the legend, exactly
+# as the roll call has done per vote state since the beginning. What the colour
+# is still required to do on its own is clear 3:1 against --ground; the rest is
+# carried by the shape, the logo, the monogram on the arc and the name.
 BENCH = {
     # nombre completo:            (slot, monograma, archivo de logo)
     "Juntos por el Perú":        (1, "JP", "juntos-por-el-peru.png"),
@@ -402,6 +466,29 @@ def bench_slot(party):
     return BENCH.get((party or "").strip(), (0,))[0]
 
 
+# One silhouette per bench, in slot order — the second channel the arc needs.
+#
+# Measured, not asserted: six hues cannot be told apart on all fifteen pairs.
+# The palette validator, run with `--pairs all`, fails our ramp at ΔE 3.4
+# (protanope, light) and its own reference ramp at 3.2, so this is arithmetic
+# and not a picking problem. The roll call has always had a shape per vote
+# state; the bench arc had none and colour was the only difference between six
+# benches. It has one now, drawn by the same `mark()` in the seat and in the
+# legend, so the two cannot drift apart.
+#
+# ponytail: five filled silhouettes plus one hollow ring. A seventh bench would
+# need a seventh shape before it needs a seventh colour.
+BENCH_SHAPE = {1: ("circle", 0), 2: ("square", 0), 3: ("diamond", 0),
+               4: ("triangle", 0), 5: ("hex", 0), 6: ("ring", 1),
+               # not one of the six: hollow, so it never reads as a bench
+               0: ("square", 1)}
+
+
+def bench_shape(party):
+    """(shape, hollow) for a bench, as POS_SHAPE does for a vote."""
+    return BENCH_SHAPE[bench_slot(party)]
+
+
 def bench_mono(party):
     """'Fuerza Popular' -> 'FP'. Initials for a bench we do not have on file,
     so the monogram channel still works for an alliance formed mid-period."""
@@ -422,7 +509,7 @@ def bench_logo(party, r="", size=26, cls=""):
     the bench has no logo on file at all: never an <img src="">."""
     p = (party or "").strip()
     s = f"gp{bench_slot(p)}"
-    box = f"width:{size}px;height:{size}px;font-size:{max(9, size // 3)}px"
+    box = f"width:{size}px;height:{size}px;font-size:{step(size / 3):g}px"
     if p in BENCH:
         return (f'<span class="blogo {s} {cls}" style="{box}">'
                 f'<img loading="lazy" decoding="async" src="{r}logos/{BENCH[p][2]}" '
@@ -481,6 +568,16 @@ CSS = """
   --lic:#7FA3CC; --pres:#A99BE8; --vio:#A99BE8;
   --grid:#3A312C; --off:#6E655C;
 }
+/* LA ESCALA TIPOGRÁFICA. Nueve pasos y ni uno más:
+     11 · 12.5 · 13.5 · 16 · 17 · 20 · 24 · 30 · 40
+   Antes había diecisiete tamaños distintos en una sola ficha de parlamentario
+   —nueve de ellos entre 9.5 y 15 px— que no es una escala sino una dispersión:
+   nada de lo que se repite tiene el mismo peso dos veces y el lector no puede
+   aprender a leer la página. Los papeles son fijos: 11 el monoespaciado de
+   etiqueta, 12.5 los pies de figura, 13.5 la interfaz densa, 16 el cuerpo y el
+   título de una fila, 17 la entradilla y el h3, 20/24 los encabezados, 30 las
+   cifras grandes, 40 el h1. demo() lee la hoja y falla si aparece un décimo.
+   El h1 y el h2 usan clamp() entre pasos de esta misma lista. */
 *{box-sizing:border-box}
 /* `all:unset` on the sortable headers deleted their focus ring, and the sheet
    had no outline rule anywhere. One place, every focusable thing. */
@@ -492,21 +589,28 @@ body{margin:0;background:var(--ground);color:var(--ink);overflow-x:hidden;
   font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none;border-bottom:1px solid var(--line)}
 a:hover{border-bottom-color:var(--accent);color:var(--accent)}
+/* DOS PESOS, no cinco. <b> inside an already-600 label resolves to `bolder`,
+   which is 900, and that put an 11/900 and a 13.5/700 on the page next to the
+   11/600 and 13.5/600 they were supposed to match. */
+b,strong{font-weight:600}
 h1,h2,h3{font-family:ui-serif,Georgia,"Times New Roman",serif;font-weight:600;
   text-wrap:balance;margin:0}
-h1{font-size:clamp(26px,4.2vw,40px);letter-spacing:-.018em;line-height:1.14}
+h1{font-size:clamp(24px,4.2vw,40px);letter-spacing:-.018em;line-height:1.14}
 /* A 91-character all-caps official title set at 40px is four lines of shouting.
-   Long headlines step down to the second level of the scale instead. */
-h1.long{font-size:clamp(23px,2.6vw,27px);line-height:1.26;letter-spacing:-.006em}
+   Long headlines step down to the second level of the scale instead. At 27px it
+   was exactly the size of the stat value three blocks below it — two different
+   things at one size is not a hierarchy — so it sits a step lower and the stat
+   value a step higher. */
+h1.long{font-size:clamp(20px,2.6vw,24px);line-height:1.26;letter-spacing:-.006em}
 /* h2 has to stay under h1.long's FLOOR, not under h1's ceiling: 82% of these
-   pages have a long title, and a fixed 24px h2 was 3px bigger than its own page
+   pages have a long title, and a fixed 24px h2 was bigger than its own page
    title at every width below 810px — no first level of hierarchy at all on a
-   phone. h1.long floors at 21px, so h2 tops out below it there and only reaches
-   24px where h1.long is already 27. */
-h2{font-size:clamp(19px,1.9vw,24px);margin:0 0 16px;padding-bottom:9px;
+   phone. h1.long floors at 20px and h2 at 17px, and h2 only reaches 20px at
+   1053px wide, where h1.long is already 24. */
+h2{font-size:clamp(17px,1.9vw,20px);margin:0 0 16px;padding-bottom:9px;
   border-bottom:1px solid var(--line);letter-spacing:-.008em}
 h3{font-size:17px;letter-spacing:-.004em}
-.h4{font:600 13px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.14em;
+.h4{font:600 13.5px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.14em;
   text-transform:uppercase;color:var(--muted);margin:0 0 10px}
 p{margin:0 0 12px;max-width:70ch}
 .wrap{max-width:1040px;margin:0 auto;padding:20px clamp(14px,3.5vw,28px) 64px}
@@ -522,20 +626,45 @@ p{margin:0 0 12px;max-width:70ch}
 nav.top{position:sticky;top:0;z-index:30;background:var(--raised);
   border-bottom:1px solid var(--line);display:flex;flex-wrap:nowrap;
   align-items:center;gap:2px;padding:0 clamp(8px,3vw,20px)}
+/* A scroller with `scrollbar-width:none` and no fade hid six of its eight
+   destinations at 375px: scrollWidth 776 in a 292px box, and the only cue that
+   more existed was «Parlamentarios» being clipped mid-word by the Tema button.
+   Two affordances, no JavaScript:
+   · the classic CSS scroll shadow — two `local` gradients painted in the page
+     colour that ride WITH the content and so uncover the two `scroll` shadows
+     underneath only at the edge that still has something behind it. The fade
+     appears on the right at rest, on both sides mid-scroll, on the left at the
+     end: it is never a decoration lying about where the content is;
+   · a real scrollbar for anyone with a mouse, which is where a hidden one is
+     least excusable. A finger gets the fade, which never steals a row of height.
+   `.links` is also the sticky nav's only scroll container, so nothing here can
+   reintroduce horizontal overflow on the page itself. */
 nav.top .links{display:flex;flex:1;min-width:0;gap:2px;align-items:center;
   overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
-  scrollbar-width:none}
-nav.top .links::-webkit-scrollbar{display:none}
-nav.top .links>a{flex:none;white-space:nowrap}
-@media(min-width:900px){nav.top .links{flex-wrap:wrap;overflow-x:visible}}
+  scrollbar-width:none;scroll-snap-type:x proximity;
+  background:
+    linear-gradient(to right,var(--raised) 40%,transparent) 0 0/34px 100% no-repeat local,
+    linear-gradient(to left,var(--raised) 40%,transparent) 100% 0/34px 100% no-repeat local,
+    linear-gradient(to right,var(--line),transparent) 0 0/22px 100% no-repeat scroll,
+    linear-gradient(to left,var(--line),transparent) 100% 0/22px 100% no-repeat scroll}
+nav.top .links::-webkit-scrollbar{height:0}
+/* a fixed height so the scrollbar rides INSIDE the 45px bar: everything that
+   sticks below the nav is offset by 45, and a scrollbar that grew the bar
+   would slide all of it out of register on desktop only. */
+@media(pointer:fine){nav.top .links{scrollbar-width:thin;height:45px}
+  nav.top .links::-webkit-scrollbar{height:6px}
+  nav.top .links::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}}
+nav.top .links>a{flex:none;white-space:nowrap;scroll-snap-align:start}
+@media(min-width:900px){nav.top .links{flex-wrap:wrap;overflow-x:visible;
+  background:none}}
 nav.top a,nav.top button{display:inline-flex;align-items:center;min-height:44px;
-  padding:0 12px;border:0;background:none;color:inherit;font:600 13px/1 system-ui,sans-serif;
+  padding:0 12px;border:0;background:none;color:inherit;font:600 13.5px/1 system-ui,sans-serif;
   cursor:pointer;border-bottom:2px solid transparent}
 nav.top a:hover,nav.top button:hover{color:var(--accent);border-bottom-color:var(--accent)}
-nav.top .brand{font-family:ui-serif,Georgia,serif;font-weight:600;font-size:15px;
+nav.top .brand{font-family:ui-serif,Georgia,serif;font-weight:600;font-size:16px;
   letter-spacing:-.01em;margin-right:8px}
 nav.top button{flex:none;margin-left:auto}
-.crumb{font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--muted);margin:18px 0 10px;
+.crumb{font:12.5px/1.5 ui-monospace,Menlo,monospace;color:var(--muted);margin:18px 0 10px;
   word-break:break-word}
 .crumb a{border:0}
 .lede{font-size:17px;color:var(--ink);max-width:66ch;margin:14px 0 0}
@@ -543,7 +672,7 @@ section{margin:34px 0}
 .card{background:var(--raised);border:1px solid var(--line);border-radius:2px;padding:18px 20px}
 .grid{display:grid;gap:14px}
 @media(min-width:760px){.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}}
-.chip{display:inline-block;font:600 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;
+.chip{display:inline-block;font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;
   text-transform:uppercase;border:1px solid currentColor;border-radius:2px;padding:5px 7px;
   white-space:nowrap;vertical-align:middle}
 .chip.d{color:var(--dip)} .chip.s{color:var(--sen)} .chip.c{color:var(--muted)}
@@ -563,7 +692,7 @@ section{margin:34px 0}
   color:currentColor;background:var(--sunk)}
 .bchip{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:4px 10px 4px 4px;
   border:1px solid var(--line);border-radius:999px;background:var(--raised);
-  font:600 13px/1.2 system-ui,sans-serif;max-width:100%;border-bottom:1px solid var(--line)}
+  font:600 13.5px/1.2 system-ui,sans-serif;max-width:100%;border-bottom:1px solid var(--line)}
 .bchip:hover{border-color:currentColor}
 .bchip .nm{color:var(--ink)}
 .bchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -576,12 +705,12 @@ a.bchip:hover{border-bottom-color:currentColor}
   border-radius:4px;flex:none}
 .shot{position:relative;overflow:hidden}
 .shot>i{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  color:var(--muted);font:600 15px/1 ui-serif,Georgia,serif;font-style:normal;
+  color:var(--muted);font:600 16px/1 ui-serif,Georgia,serif;font-style:normal;
   letter-spacing:.04em}
 .shot>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .noface{display:flex;align-items:center;justify-content:center;background:var(--sunk);
   border:1px solid var(--line);border-radius:4px;color:var(--muted);
-  font:600 15px/1 ui-serif,Georgia,serif;letter-spacing:.04em;flex:none}
+  font:600 16px/1 ui-serif,Georgia,serif;letter-spacing:.04em;flex:none}
 /* --- hemiciclo ------------------------------------------------------------ */
 .hemi{display:block;width:100%;height:auto;max-width:660px;margin:0 auto;
   overflow:visible}
@@ -608,7 +737,7 @@ a.bchip:hover{border-bottom-color:currentColor}
    calls the same SHAPE table the seat does — see the note there for why it is
    no longer a <span> with a shape class. */
 .hemifig{margin:0}
-.hemifig figcaption{color:var(--muted);font-size:13px;margin-top:10px;max-width:66ch}
+.hemifig figcaption{color:var(--muted);font-size:13.5px;margin-top:10px;max-width:66ch}
 .halls{display:grid;gap:32px}
 @media(min-width:860px){.halls{grid-template-columns:1fr 1fr;gap:36px}}
 .hall{border:1px solid var(--line);border-radius:6px;background:var(--raised);
@@ -616,7 +745,7 @@ a.bchip:hover{border-bottom-color:currentColor}
 .hall h3{margin:0 0 8px}
 .hall .hemi{max-width:520px;margin-top:6px}
 /* --- gráficos ------------------------------------------------------------- */
-.chart{display:block;width:100%;height:auto;font:12px/1 system-ui,sans-serif}
+.chart{display:block;width:100%;height:auto;font:12.5px/1 system-ui,sans-serif}
 .chart text{fill:var(--muted);font-variant-numeric:tabular-nums}
 .chart .val{fill:var(--ink);font-weight:600}
 .chart .ax{stroke:var(--grid);stroke-width:1}
@@ -625,10 +754,10 @@ a.bchip:hover{border-bottom-color:currentColor}
 .figwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0}
 .figwrap>svg{min-width:320px}
 figure{margin:0}
-figcaption{color:var(--muted);font-size:13px;line-height:1.55;margin-top:10px;max-width:70ch}
+figcaption{color:var(--muted);font-size:13.5px;line-height:1.55;margin-top:10px;max-width:70ch}
 /* --- leyenda compartida por barras, hemiciclo y columnas ------------------- */
 .key{display:grid;grid-template-columns:repeat(auto-fit,minmax(184px,1fr));
-  gap:0 18px;margin-top:10px;padding:0;list-style:none;font-size:13px}
+  gap:0 18px;margin-top:10px;padding:0;list-style:none;font-size:13.5px}
 .key li{display:flex;align-items:center;gap:8px;min-height:44px;min-width:0;
   padding:4px 0;line-height:1.35}
 .key li>a{min-width:0;overflow-wrap:anywhere}
@@ -655,16 +784,16 @@ figcaption{color:var(--muted);font-size:13px;line-height:1.55;margin-top:10px;ma
 .people .ph{width:100%;aspect-ratio:4/5;background:var(--sunk);display:block;
   position:relative;overflow:hidden}
 .people .ph>i{position:absolute;inset:0;display:flex;align-items:center;
-  justify-content:center;color:var(--muted);font:600 22px/1 ui-serif,Georgia,serif;
+  justify-content:center;color:var(--muted);font:600 20px/1 ui-serif,Georgia,serif;
   font-style:normal}
 .people .ph>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
   display:block}
 .people .noph{width:100%;aspect-ratio:4/5;display:flex;align-items:center;justify-content:center;
-  background:var(--sunk);color:var(--muted);font:600 22px/1 ui-serif,Georgia,serif}
+  background:var(--sunk);color:var(--muted);font:600 20px/1 ui-serif,Georgia,serif}
 .people .cap{padding:9px 10px 11px;display:block}
 .people .nm2{display:block;font:600 13.5px/1.3 system-ui,sans-serif;color:var(--ink)}
 .people .sub{display:flex;align-items:center;gap:6px;margin-top:6px;color:var(--muted);
-  font-size:11.5px}
+  font-size:11px}
 .people .bar{height:4px;border-radius:0;border:0;background:currentColor;display:block}
 /* --- una barra por bancada ------------------------------------------------ */
 .benchrows{display:grid;gap:2px}
@@ -680,16 +809,16 @@ figcaption{color:var(--muted);font-size:13px;line-height:1.55;margin-top:10px;ma
 .bl .nm{overflow:hidden;text-overflow:ellipsis}
 .brow .bar{height:16px}
 .brow .barw{min-width:14px}   /* el largo de la barra es el tamaño de la bancada */
-.brow .bn{font-variant-numeric:tabular-nums;font-weight:600;font-size:13px;text-align:right}
-.brow .bs{font-size:12px;color:var(--muted)}
+.brow .bn{font-variant-numeric:tabular-nums;font-weight:600;font-size:13.5px;text-align:right}
+.brow .bs{font-size:12.5px;color:var(--muted)}
 td.who2{padding:4px 12px}
 /* estado de un voto: color reservado + punto + palabra, nunca color a secas */
-.vote{display:inline-flex;align-items:center;font:600 13px/1.3 system-ui,sans-serif;
+.vote{display:inline-flex;align-items:center;font:600 13.5px/1.3 system-ui,sans-serif;
   white-space:nowrap}
 .vote.si{color:var(--si)}.vote.no{color:var(--no)}.vote.abst{color:var(--abst)}
 .vote.dead{color:var(--aus)}.vote.wait{color:var(--muted)}
 /* --- padrón: buscador pegado arriba, riel de bancadas, secciones ---------- */
-.stick{position:sticky;top:45px;z-index:20;background:var(--ground);
+.stick{position:sticky;top:46px;z-index:20;background:var(--ground);
   padding:12px 0 8px;margin:0 0 12px;border-bottom:1px solid var(--line)}
 .stick .filters{margin:0 0 8px}
 .rail{display:flex;flex-wrap:wrap;gap:6px}
@@ -701,10 +830,10 @@ td.who2{padding:4px 12px}
 .railb span{color:var(--ink)}
 .bsec{margin:30px 0 0;scroll-margin-top:120px}
 .bsech{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;
-  padding:0 0 10px;border-bottom:3px solid currentColor;font-size:19px}
+  padding:0 0 10px;border-bottom:3px solid currentColor;font-size:17px}
 .bsech a{color:var(--ink);border:0;display:inline-flex;align-items:center;
   min-height:44px}
-.bsech .cnt{font:500 12.5px/1.4 system-ui,sans-serif;color:var(--muted);
+.bsech .cnt{font:400 12.5px/1.4 system-ui,sans-serif;color:var(--muted);
   margin-left:auto;font-family:ui-monospace,Menlo,monospace}
 /* --- índice de bancadas --------------------------------------------------- */
 .bgrid{list-style:none;margin:0;padding:0;display:grid;gap:14px;
@@ -715,7 +844,7 @@ td.who2{padding:4px 12px}
 .bgrid a{display:flex;align-items:center;gap:14px;border:0;min-height:44px;
   margin-bottom:14px}
 .bgrid .t2{flex:1;min-width:0}
-.bgrid .nm2{display:block;font:600 15px/1.25 system-ui,sans-serif;color:var(--ink)}
+.bgrid .nm2{display:block;font:600 16px/1.25 system-ui,sans-serif;color:var(--ink)}
 .bgrid .sub{display:block;color:var(--muted);font-size:12.5px;margin-top:3px}
 .bgrid .big{font:600 30px/1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
   color:currentColor}
@@ -724,15 +853,15 @@ td.who2{padding:4px 12px}
 /* --- tira de asistencia: color + letra, nunca color solo ------------------ */
 .cal{display:flex;flex-wrap:wrap;gap:18px 26px}
 .mo{min-width:0}
-.mol{display:block;font:600 10px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
+.mol{display:block;font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
   text-transform:uppercase;color:var(--muted);margin-bottom:8px}
 .mol b{color:var(--ink)}
 .cells{display:flex;flex-wrap:wrap;gap:6px}
 .cal .cell{width:46px;height:46px;border:1.5px solid currentColor;border-radius:5px;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   background:var(--raised);text-decoration:none}
-.cal .cell b{font:700 15px/1 ui-monospace,Menlo,monospace}
-.cal .cell span{font:500 9.5px/1.2 ui-monospace,Menlo,monospace;color:var(--muted)}
+.cal .cell b{font:700 16px/1 ui-monospace,Menlo,monospace}
+.cal .cell span{font:400 11px/1.2 ui-monospace,Menlo,monospace;color:var(--muted)}
 .cal .cell:hover{background:var(--sunk)}
 /* --- tiras de comparación ------------------------------------------------- */
 .strip{margin:0 0 20px}
@@ -752,19 +881,19 @@ td.who2{padding:4px 12px}
 .profile .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;align-items:center}
 .tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin:0}
 .tile{border:1px solid var(--line);border-radius:4px;background:var(--raised);padding:14px 15px}
-.tile dt{font:600 10px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
+.tile dt{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
   text-transform:uppercase;color:var(--muted)}
-.tile dd{margin:6px 0 0;font:600 27px/1.05 ui-serif,Georgia,serif;
+.tile dd{margin:6px 0 0;font:600 30px/1.05 ui-serif,Georgia,serif;
   font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.tile dd small{display:block;font:400 12px/1.5 system-ui,sans-serif;color:var(--muted);
+.tile dd small{display:block;font:400 12.5px/1.5 system-ui,sans-serif;color:var(--muted);
   letter-spacing:0;margin-top:5px}
 .stat{display:flex;flex-wrap:wrap;gap:12px 30px;margin:0}
 .stat div{min-width:104px}
-.stat dt{font:600 10px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
+.stat dt{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
   text-transform:uppercase;color:var(--muted)}
-.stat dd{margin:2px 0 0;font:600 26px/1.1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
+.stat dd{margin:2px 0 0;font:600 30px/1.1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
   letter-spacing:-.02em}
-.stat dd small{font:400 12px/1.4 system-ui,sans-serif;color:var(--muted);display:block;
+.stat dd small{font:400 12.5px/1.4 system-ui,sans-serif;color:var(--muted);display:block;
   letter-spacing:0}
 /* legislative track */
 .track{list-style:none;margin:0;padding:0;display:grid;gap:0}
@@ -780,8 +909,8 @@ td.who2{padding:4px 12px}
 .track li.todo .name,.track li.todo .why{color:var(--muted)}
 .track li.stop{border-left-color:var(--dead)}
 .track li.stop .dot{background:var(--dead);border-color:var(--dead)}
-.track .name{font:600 15px/1.3 system-ui,sans-serif;display:block}
-.track .why{display:block;font-size:13px;color:var(--muted);max-width:56ch;margin-top:2px}
+.track .name{font:600 16px/1.3 system-ui,sans-serif;display:block}
+.track .why{display:block;font-size:13.5px;color:var(--muted);max-width:56ch;margin-top:2px}
 .track .when{font:600 11px/1 ui-monospace,Menlo,monospace;color:var(--muted);
   letter-spacing:.06em;text-transform:uppercase}
 @media(min-width:860px){
@@ -810,24 +939,24 @@ td.who2{padding:4px 12px}
   padding:14px 0;min-height:44px}
 .kv{margin:0;display:grid;gap:12px 24px}
 @media(min-width:620px){.kv{grid-template-columns:1fr 1fr}}
-.kv dt{font:600 10px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
+.kv dt{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;
   text-transform:uppercase;color:var(--muted)}
 .kv dd{margin:2px 0 0}
-.kv dd small{display:block;color:var(--muted);font-size:12px;line-height:1.5}
+.kv dd small{display:block;color:var(--muted);font-size:12.5px;line-height:1.5}
 .who{display:flex;gap:14px;align-items:flex-start}
 .who img{width:64px;height:80px;object-fit:cover;border:1px solid var(--line);
   border-radius:2px;background:var(--sunk);flex:none}
-.who .nm{font-family:ui-serif,Georgia,serif;font-size:18px;font-weight:600;display:block}
+.who .nm{font-family:ui-serif,Georgia,serif;font-size:17px;font-weight:600;display:block}
 .roll{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px 10px}
-.roll li{font-size:14px}
+.roll li{font-size:13.5px}
 .roll li a{display:inline-block;padding:11px 0;min-height:44px}
-.roll .rank{font:600 10px/1 ui-monospace,Menlo,monospace;color:var(--muted)}
+.roll .rank{font:600 11px/1 ui-monospace,Menlo,monospace;color:var(--muted)}
 .scroll{overflow:auto;max-height:78vh;border:1px solid var(--line);border-radius:2px;
   background:var(--raised);-webkit-overflow-scrolling:touch}
-table{border-collapse:collapse;width:100%;font-size:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
 .scroll table{min-width:560px}
 th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font:600 10px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;text-transform:uppercase;
+th{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.13em;text-transform:uppercase;
   color:var(--muted);position:sticky;top:0;background:var(--raised);z-index:2;
   white-space:nowrap;box-shadow:inset 0 -1px 0 var(--line)}
 th button{all:unset;cursor:pointer;display:block;width:100%;min-height:44px;
@@ -844,14 +973,14 @@ tr.grp td{background:var(--sunk);font:600 11px/1.4 ui-monospace,Menlo,monospace;
 td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 td.nw{white-space:nowrap}
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
-.filters input,.filters select{min-height:44px;padding:0 12px;font:14px system-ui,sans-serif;
+.filters input,.filters select{min-height:44px;padding:0 12px;font:16px system-ui,sans-serif;
   color:var(--ink);background:var(--raised);border:1px solid var(--line);border-radius:2px}
 .filters input{flex:1 1 220px;min-width:0}
 .bar{display:flex;height:14px;border-radius:2px;overflow:hidden;border:1px solid var(--line);
   background:var(--sunk)}
 .bar i{display:block;height:100%}
 .prov{border-top:1px solid var(--line);margin-top:44px;padding-top:16px;color:var(--muted);
-  font-size:13px}
+  font-size:13.5px}
 .crumb a,.prov a{display:inline-block;padding:13px 0;line-height:18px}
 /* «Inicio» is 43px of text; a tap target is 44. Padding it out and pulling the
    margin back keeps the crumb reading as one line while the target is legal. */
@@ -870,23 +999,25 @@ a.chip{min-height:44px;display:inline-flex;align-items:center}
 .roll.signers li a:hover{border-color:currentColor;color:currentColor}
 .why a,.kv dd a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
 /* A link inside running prose is still a tap target on a phone. */
-p a,.lede a,.note a{display:inline-block;min-height:44px;line-height:22px;padding:11px 0}
+p a,.lede a,.note a,figcaption a{display:inline-block;min-height:44px;line-height:22px;
+  padding:11px 0}
 .gloss{border:1px solid var(--line);border-radius:2px;margin:0 0 14px;background:var(--raised)}
 .gloss summary{cursor:pointer;padding:12px 16px;min-height:44px;display:flex;
-  align-items:center;font:600 13px/1.4 system-ui,sans-serif}
+  align-items:center;font:600 13.5px/1.4 system-ui,sans-serif}
 .gloss dl{padding:0 16px 16px;margin:0}
 .gloss dd{font-size:13.5px;color:var(--muted)}
 .prov b{color:var(--ink)}
 .prov,.prov a{overflow-wrap:anywhere}   /* PDF filenames are 60 characters long */
-.prov code{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
+.prov code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;word-break:break-all}
 code{overflow-wrap:anywhere}
 .pager{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
 .pager a,.pager span{min-height:44px;min-width:44px;display:inline-flex;align-items:center;
   justify-content:center;padding:0 10px;border:1px solid var(--line);border-radius:2px;
-  font:600 13px/1 ui-monospace,Menlo,monospace}
+  font:600 13.5px/1 ui-monospace,Menlo,monospace}
 /* White on the accent is 3.63:1 in dark mode — 13px text needs 4.5:1. The page
    ground reads on both accents: 6.73:1 light, 5.22:1 dark. */
 .pager .on{background:var(--accent);color:var(--ground);border-color:var(--accent)}
+.pager .mut{border-color:transparent;font-weight:400}
 .facets{display:flex;flex-wrap:wrap;gap:8px}
 .facets a{border:1px solid var(--line);border-radius:2px;padding:10px 12px;min-height:44px;
   display:inline-flex;align-items:center;gap:8px;font-size:13.5px}
@@ -905,14 +1036,14 @@ code{overflow-wrap:anywhere}
 .ranked .track{background:var(--sunk);border-radius:3px;height:14px;overflow:hidden;
   border:1px solid var(--line)}
 .ranked .track i{display:block;height:100%}
-.ranked .n{font:600 14px/1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
+.ranked .n{font:600 13.5px/1 ui-serif,Georgia,serif;font-variant-numeric:tabular-nums;
   text-align:right}
-.ranked .pc{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;
+.ranked .pc{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;
   text-align:right}
 .feed{list-style:none;margin:0;padding:0}
 .feed li{padding:6px 0;border-bottom:1px solid var(--line)}
 .feed li:last-child{border-bottom:0}
-.feed .t{display:block;font-size:14.5px;padding:9px 0;min-height:44px}
+.feed .t{display:block;font-size:16px;padding:9px 0;min-height:44px}
 /* el padrón: la marca de bancada al lado del nombre, no solo texto gris */
 .feed li>.rowmark{float:left;margin:11px 10px 0 0}
 .feed .m{font:600 11px/1.6 ui-monospace,Menlo,monospace;color:var(--muted);letter-spacing:.06em}
@@ -930,6 +1061,46 @@ code{overflow-wrap:anywhere}
 .toc li a{display:block;min-height:44px;line-height:1.35;padding:12px 0;
   border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 @media(min-width:760px){.toc{columns:2;column-gap:30px}.toc li{break-inside:avoid}}
+/* --- listados largos: la fila con etapa, medida y agrupación ---------------
+   Las 311 páginas de listado son las más largas del sitio — comision/agraria
+   medía 50 963 px a 375, 63 pantallas — y no tenían ni un solo elemento
+   gráfico: 250 filas del mismo tamaño, del mismo peso y del mismo color, con
+   el título corriendo 136 caracteres por línea mientras el propio .lede del
+   sitio se corta en 66. Cada fila lleva ahora tres cosas: un riel del color de
+   su etapa (el mismo color que esa etapa tiene en la barra de la portada), la
+   etapa escrita —el color nunca va solo— y un título con medida de lectura.
+   El estado que se repite en toda la página se dice una vez arriba y solo se
+   imprime en las filas que se salen de él, que son las que hay que ver. */
+.feed li.r{display:grid;grid-template-columns:1fr;gap:0 14px;align-items:start;
+  padding:8px 0 10px 13px;border-left:3px solid currentColor}
+@media(min-width:520px){.feed li.r{grid-template-columns:92px 1fr}}
+.feed .stg{display:block;font:600 11px/1.4 ui-monospace,Menlo,monospace;
+  letter-spacing:.1em;text-transform:uppercase;color:currentColor;
+  padding-top:11px;overflow-wrap:anywhere}
+.feed li.r .t{font:600 16px/1.38 system-ui,sans-serif;color:var(--ink);
+  max-width:62ch;padding:6px 0 3px}
+.feed li.r .m{display:block}
+.feed li.r>.stg{grid-row:1}
+@media(min-width:520px){.feed li.r>.stg{grid-row:1/span 3}
+  .feed li.r>.m,.feed li.r>.t,.feed li.r>.chip,.feed li.r>.sign{grid-column:2}
+  /* nada que alinear si toda la página está en el mismo estado: la columna de
+     la etapa desaparece. Después de la regla de arriba a propósito — con la
+     misma especificidad, gana la última, y así fue como esta perdió una vez. */
+  .feed.nostg li.r{grid-template-columns:1fr}
+  .feed.nostg li.r>*{grid-column:1}}
+/* la cabecera de grupo: lo que convierte 250 filas en un documento navegable */
+li.gh{display:flex;align-items:baseline;gap:12px;position:sticky;top:46px;
+  z-index:5;background:var(--ground);padding:14px 0 7px;margin-top:8px;
+  font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line)}
+li.gh:first-child{margin-top:0}
+li.gh b{margin-left:auto;color:var(--ink);letter-spacing:.06em}
+.ranked li.gh{border-bottom:1px solid var(--line)}
+.ranked .lbl small{display:block;color:var(--muted);font-size:12.5px;
+  margin-top:2px}
+/* las seis etapas del trámite, con el color que ya tienen en la portada */
+.st-pres{color:var(--sen)} .st-com{color:var(--wait)} .st-pleno{color:var(--accent)}
+.st-autog{color:var(--vio)} .st-ley{color:var(--ok)} .st-dead{color:var(--dead)}
 """
 
 # Shared by every list page: filter the rows already in the DOM, and accept the
@@ -939,10 +1110,13 @@ FILTER_JS = """<script>
 /* «rodriguez» tiene que encontrar a Rodríguez: nadie escribe las tildes en un
    buscador, y sin esto la lista devolvía cero. */
 function nrm(s){return s.normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toLowerCase();}
-function flt(){var v=nrm(q.value),n=0;
+function flt(){var v=nrm(q.value),n=0,t=0;
 [].forEach.call(ls.children,function(li){
-var h=nrm(li.textContent).indexOf(v)<0;li.style.display=h?"none":"";n+=h?0:1;});
-if(window.cnt)cnt.textContent=n+" de "+ls.children.length+" en esta página.";
+/* las cabeceras de grupo no son resultados: se van mientras se filtra y
+   vuelven al borrar la búsqueda, para no dejar un rótulo sobre cero filas. */
+if(li.className.indexOf("gh")>=0){li.style.display=v?"none":"";return;}
+t++;var h=nrm(li.textContent).indexOf(v)<0;li.style.display=h?"none":"";n+=h?0:1;});
+if(window.cnt)cnt.textContent=n+" de "+t+" en esta página.";
 try{history.replaceState(null,"",v?"#q="+encodeURIComponent(q.value):"#");}catch(e){}}
 q.oninput=flt;
 var h0=decodeURIComponent(location.hash.replace(/^#(q=)?/,""));
@@ -1059,7 +1233,45 @@ def initials(full):
     return ((n[0][:1] + (n[-1][:1] if len(n) > 1 else "")) or "?").upper()
 
 
-def avatar(L, w=48, h=60, cls="face"):
+# --------------------------------------------------------------- retratos
+#
+# The face is the strongest anchor this site has, and for 190 people it used to
+# be an <img> pointed at the chamber's own CMS: 37.7 MB over 29 requests to fill
+# 38 px thumbnails on /parlamentarios.html, and one upstream path change away
+# from deleting the face from 330 fichas, the padrón and 6 bench pages at once.
+#
+# `assets/photos/` is the tracked source, like `assets/logos/`, written by
+# `python3 -m ingest.photos` (download once, ffmpeg to 160 px and 400 px wide,
+# commit). `main()` copies it into the output; nothing under `site/` is an input.
+PHOTOS = ROOT / "assets" / "photos"
+PHOTO_W = (160, 400)
+
+
+@functools.lru_cache(maxsize=None)
+def local_photo(slug):
+    """True when every width of this portrait is in the repo. Checked, not
+    assumed: a slug that never downloaded gets the lettered tile rather than a
+    404, and the build still works on a clone with no photos at all."""
+    return all((PHOTOS / f"{slug}-{w}.jpg").is_file() for w in PHOTO_W)
+
+
+def photo_img(L, r, w, h, sizes):
+    """<img> for a portrait we hold locally, or "" when we do not.
+
+    `sizes` is what the layout will actually give the image, so a phone picks
+    the 160 px file. Intrinsic width/height are always set: without them the
+    row height is unknown until the bytes land and the list reflows.
+    """
+    if not (L and local_photo(L["slug"])):
+        return ""
+    b = f'{r}photos/{L["slug"]}'
+    return (f'<img loading="lazy" decoding="async" width="{w}" height="{h}" '
+            f'src="{b}-400.jpg" srcset="{b}-160.jpg 160w, {b}-400.jpg 400w" '
+            f'sizes="{sizes}" '
+            f'alt="Retrato oficial de {esc(nice_name(L["full_name"]))}">')
+
+
+def avatar(L, w=48, h=60, cls="face", r=""):
     """A portrait, or a lettered tile when there is none.
 
     Never an empty <img src="">: that shipped once and rendered as a
@@ -1068,12 +1280,12 @@ def avatar(L, w=48, h=60, cls="face"):
     initials instead of to a grey rectangle — no JavaScript involved."""
     box = f"width:{w}px;height:{h}px"
     ini = esc(initials(L["full_name"]) if L else "?")
-    if L and L.get("photo_url"):
+    img = photo_img(L, r, w, h, f"{w}px")
+    if img:
         return (f'<span class="{cls} shot" style="{box}">'
-                f'<i aria-hidden="true" style="font-size:{max(12, w // 3)}px">{ini}</i>'
-                f'<img loading="lazy" decoding="async" '
-                f'src="{esc(L["photo_url"])}" alt=""></span>')
-    return (f'<span class="noface {cls}" style="{box};font-size:{max(12, w // 3)}px" '
+                f'<i aria-hidden="true" style="font-size:{step(w / 3):g}px">{ini}</i>'
+                f"{img}</span>")
+    return (f'<span class="noface {cls}" style="{box};font-size:{step(w / 3):g}px" '
             f'aria-hidden="true">{ini}</span>')
 
 
@@ -1136,6 +1348,14 @@ SHAPE = {
         f'<path d="M{x:.1f} {y - r * 1.3:.1f}L{x + r * 1.25:.1f} {y + r * .85:.1f}'
         f'L{x - r * 1.25:.1f} {y + r * .85:.1f}Z"'),
     "ring": lambda x, y, r: f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r * .72:.1f}"',
+    # Sixth silhouette, added for the sixth bench: a hexagon reads as its own
+    # thing next to a circle at legend size and does not collide with the
+    # triangle the way a second, inverted triangle would.
+    "hex": lambda x, y, r: (
+        '<path d="M' + "L".join(
+            f"{x + r * 1.12 * math.cos(math.radians(a)):.1f} "
+            f"{y + r * 1.12 * math.sin(math.radians(a)):.1f}"
+            for a in range(-90, 270, 60)) + 'Z"'),
 }
 # vote state -> (shape, hollow). Hollow marks read as "not a vote": absent,
 # excused, chairing. Eight states, eight silhouettes — «sin voto registrado»
@@ -1248,16 +1468,19 @@ def hemicycle(seats, r="", middle=None, sub="", ident="hemi", groups=None):
 
 
 def bench_seats(legs, r="", colour=lambda L: f"var(--gp{bench_slot(L['party'])})",
-                cls=lambda L: ""):
-    """Legislators sorted into the arc: benches contiguous, in palette order, so
-    the only bench colours that ever touch are the pairs the palette was
-    validated on. Within a bench, alphabetical. Returns (seats, groups)."""
+                cls=lambda L: bench_shape(L["party"]), link=True):
+    """Legislators sorted into the arc: benches contiguous, in palette order,
+    each bench drawn in its own colour AND its own silhouette. Within a bench,
+    alphabetical. Returns (seats, groups).
+
+    `cls` is the seat's shape; a caller that is answering a different question
+    — the bench page asks "which of these seats are ours" — overrides it."""
     key = lambda L: (bench_slot(L["party"]) or 99, L["full_name"])  # noqa: E731
     ordered = sorted(legs, key=key)
     seats = [(colour(L),
               f'{nice_name(L["full_name"])} — {L["party"] or "sin grupo"}'
               f'{" · " + L["district"] if L["district"] else ""}',
-              leg_url(r, L["slug"]), cls(L))
+              leg_url(r, L["slug"]) if link else "", cls(L))
              for L in ordered]
     groups, last = [], object()
     for L in ordered:
@@ -1415,8 +1638,12 @@ def bench_split(rows, party_of, r="", note=""):
     order = sorted(c, key=lambda p: (bench_slot(p) or 99, p))
     tot = sum(c.values())
     bar = stack_bar([(f"var(--gp{bench_slot(p)})", p, c[p]) for p in order], tot)
+    # The swatch is the seat: same `mark()`, same silhouette, same colour. It
+    # used to be a `<span class="sw">` square standing in for a round seat —
+    # the one place where "the key is drawn by mark() so it cannot drift" was
+    # still a claim rather than a fact.
     leg = ('<ul class="key">' + "".join(
-        f'<li><span class="sw" style="background:var(--gp{bench_slot(p)})"></span>'
+        f'<li>{swatch(f"var(--gp{bench_slot(p)})", bench_shape(p), p)}'
         f'{bench_logo(p, r, 24)}<a href="{bench_url(r, p)}">{esc(p)}</a>'
         f'<b>{c[p]}</b> <span class="mut">{pctxt(c[p], tot)}</span></li>'
         for p in order) + "</ul>")
@@ -1792,7 +2019,8 @@ def text_blocks(body):
                 rest = first[m.end():].strip()
                 # "Artículo 1. Objeto de la presente ley" reads better in a table
                 # of contents than "Artículo 1", so the first clause comes along.
-                lead = re.split(r"(?<=[.;:])\s", rest, maxsplit=1)[0][:80] if rest else ""
+                lead = clip(re.split(r"(?<=[.;:])\s", rest, maxsplit=1)[0], 80,
+                            "") if rest else ""
                 head(m.group(1), m.group(1) + (". " + lead if lead else ""))
                 lines = ([rest] if rest else []) + lines[1:]
         if not lines:
@@ -1943,7 +2171,7 @@ def bill_text_html(d, b, r):
 <a href="{r}proyectos.html">Proyectos de ley</a> ›
 <a href="{b["ply_num"]}.html">{esc(b["code"])}</a> › Texto</div>
 <span class="eyebrow">Texto del proyecto {esc(b["code"])}</span>
-<h1>{esc(ttl if len(ttl) <= 150 else ttl[:150].rsplit(" ", 1)[0] + "…")}</h1>
+<h1>{esc(clip(ttl, 150))}</h1>
 <p class="lede">{text_stats(t)}. {pdf + "." if pdf else ""}
 <a href="{b["ply_num"]}.html">Volver a la ficha del proyecto</a>, con su estado,
 su trámite, quién lo firmó y el historial completo del expediente.</p>
@@ -1965,17 +2193,149 @@ su trámite, quién lo firmó y el historial completo del expediente.</p>
 
 # ---------------------------------------------------------------- bill pages
 
-def bill_row(r, b, extra=""):
+# The six stages, as they read in a list: a colour that matches the stack bar
+# on the portada, and the word, because the colour is never the only channel.
+STAGE_TAG = {"PRES": ("Presentado", "st-pres"), "COM": ("En comisión", "st-com"),
+             "PLENO": ("En el Pleno", "st-pleno"), "REV": ("Cámara revisora", "st-pleno"),
+             "AUTOG": ("Autógrafa", "st-autog"), "LEY": ("Ya es ley", "st-ley"),
+             "DEAD": ("Archivado", "st-dead")}
+STAGE_COL = {"PRES": "var(--sen)", "COM": "var(--wait)", "PLENO": "var(--accent)",
+             "REV": "var(--accent)", "AUTOG": "var(--vio)", "LEY": "var(--ok)",
+             "DEAD": "var(--dead)"}
+
+
+def stage_badge(b):
+    """The stage, in words, in the rail's own colour."""
+    tag, _tone = STAGE_TAG.get(status_info(b["status"])[0], STAGE_TAG["PRES"])
+    return f'<span class="stg">{esc(tag)}</span>'
+
+
+def status_chip(b):
+    """The published state, as a chip."""
     stage = status_info(b["status"])[0]
     cls = {"LEY": "ok", "DEAD": "dead"}.get(stage, "wait")
+    return (f'<span class="chip {cls}" style="margin-top:6px">'
+            f'{esc(b["status"] or "—")}</span>')
+
+
+def repeated(b):
+    """The two pieces of a row that say what state it is in. Handed to
+    `paginate` separately from the row so it can lift them out where they turn
+    out to say the same thing on most of the page: what is left in the scroll
+    is then the rows that DIFFER, which is the whole reason to scroll. The rail
+    keeps its colour either way, so the stage never stops being visible."""
+    return (stage_badge(b), status_chip(b))
+
+
+def bill_row(r, b, extra=""):
+    """One bill in a list: a rail in the colour of its stage, the stage in
+    words, the code and date, the title at reading measure, and the published
+    state. Three channels for the stage — position, colour, word — because a
+    list of 150 rows is scanned, not read."""
+    _tag, tone = STAGE_TAG.get(status_info(b["status"])[0], STAGE_TAG["PRES"])
     t = b.get("text")
     if t and t["has_body"]:
         extra += " · texto en línea"
-    return (f'<li><span class="m">{esc(b["code"])} · {fecha(b["presented_on"])}'
+    return (f'<li class="r {tone}">{stage_badge(b)}'
+            f'<span class="m">{esc(b["code"])} · {fecha(b["presented_on"])}'
             f'{extra}</span>'
-            f'<a class="t" href="{bill_url(r, b)}">{esc((b["title"] or "")[:190])}</a>'
-            f'<span class="chip {cls}" style="margin-top:6px">{esc(b["status"] or "—")}'
-            f'</span></li>')
+            f'<a class="t" href="{bill_url(r, b)}">{esc(clip(b["title"], 110))}</a>'
+            f'{status_chip(b)}</li>')
+
+
+# Mociones, by what the instrument actually is. The register publishes nine
+# spellings of five things, and 87 of the 107 are greetings — a fact the page
+# hid completely by printing them in arrival order with an identical chip.
+MOC_FAMILY = {"inv": ("Investigación", "st-pleno"),
+              "control": ("Control político", "st-autog"),
+              "esp": ("Comisión especial", "st-pres"),
+              "decl": ("Interés nacional", "st-com"),
+              "otra": ("Otro tipo", "st-ley"),
+              "saludo": ("Saludo", "st-dead")}
+MOC_ORDER = ("inv", "control", "esp", "decl", "otra", "saludo")
+MOC_COL = {"inv": "var(--accent)", "control": "var(--vio)", "esp": "var(--sen)",
+           "decl": "var(--wait)", "otra": "var(--ok)", "saludo": "var(--dead)"}
+
+
+def moc_family(kind):
+    k = norm(kind or "")
+    if "INVESTIGACION" in k:
+        return "inv"
+    if "INTERPELACION" in k or "INVITACION" in k or "MINISTROS" in k:
+        return "control"
+    if "COMISION" in k:
+        return "esp"
+    if "INTERES NACIONAL" in k or "NECESIDAD PUBLICA" in k or "DECLARACION" in k:
+        return "decl"
+    if "SALUDO" in k:
+        return "saludo"
+    return "otra"
+
+
+def mes_de(iso):
+    """'2021-08-13' -> 'agosto de 2021'. The group a list row belongs to."""
+    if not iso:
+        return "Sin fecha registrada"
+    try:
+        d = dt.date.fromisoformat(str(iso)[:10])
+    except ValueError:
+        return "Sin fecha registrada"
+    return f"{MES[d.month - 1]} de {d.year}"
+
+
+def stage_mix(bills, r=""):
+    """The shape of a 250-row list, before reading it: one stacked bar and a
+    legend over the stages of the rows on this page. Same two helpers as every
+    other bar on the site, so it cannot look like a different chart."""
+    c = {}
+    for b in bills:
+        k = status_info(b["status"])[0]
+        c[k] = c.get(k, 0) + 1
+    order = [k for k in ("PRES", "COM", "PLENO", "REV", "AUTOG", "LEY", "DEAD")
+             if c.get(k)]
+    if len(order) < 2:
+        # A facet that IS one state — «Proyectos en estado PUBLICADA EN EL
+        # DIARIO OFICIAL EL PERUANO» — has nothing to split. Its shape over
+        # time is the fact it does have, and it is the same axis the month
+        # headings below are cut on.
+        ds = [b["presented_on"][:10] for b in bills if b["presented_on"]]
+        for cut, unit in ((7, "mes"), (10, "día")):
+            per = {}
+            for x in ds:
+                per[x[:cut]] = per.get(x[:cut], 0) + 1
+            ks = sorted(per)
+            if len(ks) >= 3:
+                pts = [(f'{MES[int(k[5:7]) - 1][:3]} {k[2:4]}'
+                        if cut == 7 and k.endswith(("-01", "-07"))
+                        else k[8:10] if cut == 10 else "",
+                        fecha(k) if cut == 10
+                        else f'{MES[int(k[5:7]) - 1]} de {k[:4]}', per[k])
+                       for k in ks]
+                return ('<figure style="margin:18px 0 0">'
+                        + col_chart(pts, "proyectos", 130, "mix", "var(--wait)",
+                                    every=max(1, len(ks) // 12))
+                        + f'<figcaption>Cuántos de estos proyectos entraron cada '
+                          f'{unit}. Todos están en el mismo estado, así que lo '
+                          f'que los distingue es cuándo llegaron; abajo la lista '
+                          f'va agrupada por mes.</figcaption></figure>')
+        return ""
+    tot = sum(c.values())
+    return ('<figure style="margin:18px 0 0">'
+            + stack_bar([(STAGE_COL[k], STAGE_TAG[k][0], c[k]) for k in order],
+                        tot, height=18)
+            + key_list([(STAGE_COL[k], esc(STAGE_TAG[k][0]),
+                         f"{num(c[k])} · {pctxt(c[k], tot)}") for k in order])
+            + '<figcaption>En qué etapa del trámite están los proyectos de este '
+              'listado. Cada fila de abajo lleva el mismo color en su riel '
+              'izquierdo.</figcaption></figure>')
+
+
+def bill_feed(r, bills):
+    """Rows for `paginate`: (mes, chip, <li>) — the month groups the list and
+    the chip is handed over separately so the page can hoist it if it turns out
+    to say the same thing on most of its rows."""
+    return [(mes_de(b["presented_on"]), repeated(b), bill_row(r, b))
+            for b in bills]
 
 
 def render_bill(d, b):
@@ -2092,7 +2452,7 @@ def render_bill(d, b):
                     f'{esc(CHAMBER[L["chamber"]])} &middot; el padrón de su '
                     f'periodo ya no se publica')
             spon_html = (
-                f'<div class="who">{avatar(L, 72, 90)}'
+                f'<div class="who">{avatar(L, 72, 90, r=r)}'
                 + f'<div><a class="nm" href="{leg_url(r, L["slug"])}">'
                 f'{esc(nice_name(L["full_name"]))}</a>'
                 f'<div class="sm mut">{seat}</div>'
@@ -2166,7 +2526,7 @@ def render_bill(d, b):
             vr.append(
                 f'<tr><td>{fecha(v["held_on"])}</td>'
                 f'<td><a href="{vote_url(r, v)}">'
-                f'{esc((v["subject"] or v["id"])[:110])}</a></td>'
+                f'{esc(clip(v["subject"] or v["id"], 110))}</a></td>'
                 f'<td class="num">{y}</td><td class="num">{nn}</td>'
                 f'<td class="num">{aa}</td>'
                 f'<td>{esc(d["voutcome"][v["id"]])}</td></tr>')
@@ -2229,7 +2589,7 @@ def render_bill(d, b):
     # so the status sentence and the tracker stay in the first screen; the full
     # title is right below, verbatim.
     full = b["title"] or "Sin título registrado"
-    head = full if len(full) <= 150 else full[:150].rsplit(" ", 1)[0] + "…"
+    head = clip(full, 150)
     body = f"""
 <div class="crumb"><a href="{r}index.html">Inicio</a> ›
 <a href="{r}proyectos.html">Proyectos de ley</a> ›
@@ -2276,8 +2636,8 @@ def render_bill(d, b):
     f'República del Perú, consultado el {fecha(dt.date.today().isoformat())}».',
 ])}
 """
-    return (shell(f'{b["code"]} · {(b["title"] or "")[:70]}', body, depth=3,
-                  desc=sentence[:180]),
+    return (shell(short_title(b["code"], b["title"]), body, depth=3,
+                  desc=clip(sentence, 180)),
             text_page)
 
 
@@ -2645,7 +3005,7 @@ def render_leg(d, L, base):
                   f'{fecha(by_id[m]["presented_on"])}'
                   f'{" · promotor" if (rk or 0) == 0 else ""}</span>'
                   f'<a class="t" href="{r}mociones.html#m-{esc(m)}">'
-                  f'{esc((by_id[m]["summary"] or "").strip()[:170])}</a></li>'
+                  f'{esc(clip(by_id[m]["summary"], 170))}</a></li>'
                   for m, rk in mots[:40]) + "</ul></section>")
     vl = ""
     if vts:
@@ -2662,7 +3022,7 @@ def render_leg(d, L, base):
             vrows.append(
                 f'<tr><td>{fecha(vv["held_on"])}</td>'
                 f'<td><a href="{vote_url(r, vv)}">'
-                f'{esc((vv["subject"] or vv["id"])[:120])}</a>'
+                f'{esc(clip(vv["subject"] or vv["id"], 120))}</a>'
                 + (f' <span class="chip {tone}">{esc(lab)}</span>' if lab else "")
                 + f'</td><td>{esc(pos(p)[0])}'
                 + (' <b>(rompió con su bancada)</b>' if odd else "")
@@ -2807,7 +3167,7 @@ curules.</figcaption></figure></section>"""
 <span class="eyebrow">{esc(CHAMBER[L["chamber"]])} · {per}</span>
 <h1>{esc(nice_name(L["full_name"]))}</h1>
 <div class="profile">
-{avatar(L, 132, 165, "face port")}
+{avatar(L, 132, 165, "face port", r)}
 <div><p class="lede" style="margin-top:0">{lede}</p>
 <div class="meta">{party_chip(L["party"], r)} {district_chip(L["district"], r)}
 <span class="chip {L["chamber"].lower()}">{esc(CHAMBER_SHORT[L["chamber"]])}</span>
@@ -3220,19 +3580,37 @@ def render_vote(d, v):
            groups=[tuple(g) for g in hgroups])}
 {key_list([(pos_col(k), esc(pos(k)[0]), counts.get(k, 0)) for k in seen_pos],
           shapes=[pos_shape(k) for k in seen_pos])}
-<figcaption>Un escaño por fila de la lista nominal, agrupado por bancada —las
-siglas y las líneas marcan dónde empieza cada una— y dibujado según el sentido
-de su voto: <b>a favor</b> es un círculo, <b>en contra</b> un rombo,
-<b>abstención</b> un triángulo, y las figuras huecas son quienes no votaron.
-La forma va además del color, así que en pantalla ancha el diagrama se lee
-también en blanco y negro, y cada escaño lleva el nombre de quien lo ocupa y
-enlaza a su ficha. En un teléfono no: ahí cada escaño mide unos 8 px, a ese
-tamaño no se distingue ninguna figura ni se puede tocar un escaño, y el
-diagrama queda como ilustración. Lo que se lee entonces es la lista ordenable
-de más abajo, con los mismos nombres, el mismo sentido de voto y los mismos
-enlaces a tamaño completo. Cifras leídas de la lista nominal de
-esta acta.{src_note} El orden dentro de la sala es el de este sitio: el Congreso
-no publica el plano de curules.</figcaption></figure>"""
+<figcaption>Un escaño por fila de la lista nominal, agrupado por bancada, con
+la figura del voto: <b>a favor</b> círculo, <b>en contra</b> rombo,
+<b>abstención</b> triángulo; hueca, quien no votó. En un teléfono cada escaño
+mide unos 8 px y el diagrama queda como ilustración: la
+<a href="#quien">lista ordenable</a> de abajo dice lo mismo a tamaño
+completo.{src_note}</figcaption></figure>"""
+    else:
+        # One roll call of five had no diagram at all, because the acta has no
+        # nominal list. The honest picture is not "no picture": it is the
+        # chamber, whole, with every seat drawn as an empty ring — the shape
+        # this site already uses for «no consta cómo votó». What the record is
+        # missing is a fact about the record, and it is worth a graphic.
+        mem = [L for L in d["legs"]
+               if L["chamber"] == ch and L["per_par"] >= 2026]
+        if mem:
+            # No links on these seats: the WCAG 2.5.8 «Equivalent» exception
+            # the arc relies on is the full-size roster further down the same
+            # page, and on this page there is none to have. The diagram is a
+            # statement about the record, so it is a picture and not a control.
+            seats, hg = bench_seats(mem, r, colour=lambda L: "var(--off)",
+                                    cls=lambda L: ("ring", 1), link=False)
+            hemi = f"""<figure class="hemifig">
+{hemicycle(seats, r, middle=(str(len(mem)), "sin voto en acta"),
+           sub=f"Escaños de {CHAMBER[ch]}: esta votación no tiene lista nominal",
+           ident="hemi-vote", groups=hg)}
+<figcaption>Los {len(mem)} escaños {esc(DE[ch])}, todos huecos: de esta votación
+el Congreso no publicó lista nominal, así que no consta cómo votó ninguno de
+ellos. El diagrama está aquí, y vacío, porque lo que falta es un dato del
+registro y no un hueco de esta página. Los escaños no enlazan a nada porque no
+hay nada que contar de ninguno: quiénes son está en
+<a href="{r}parlamentarios.html">el padrón</a>.</figcaption></figure>"""
 
     # ---- how each bench voted, as a row of 100% bars. The table below has the
     # exact numbers; this answers "did anyone split" without reading it.
@@ -3280,7 +3658,14 @@ no publica el plano de curules.</figcaption></figure>"""
             a, t = d["gp_agree"].get((ch, p), (0, 0))
             return f"{a} de {t}" if t > 1 else "—"
 
-        ptable = ('<div class="scroll"><table><thead><tr><th>Grupo parlamentario</th>'
+        # The same result was on this page three times in a row: the arc, six
+        # bars, then a seven-row table — about 700 px saying one thing. The
+        # table is the exact-numbers version, which is the one a reader asks
+        # for second, so it folds. At 375px it was 807 px of table in a 347 px
+        # window; folded, it costs one 44 px row until somebody wants it.
+        ptable = ('<details class="gloss" style="margin-top:16px"><summary>'
+                  'Las cifras exactas, bancada por bancada</summary>'
+                  '<div class="scroll"><table><thead><tr><th>Grupo parlamentario</th>'
                   + "".join(f'<th>{esc(pos(h)[0])}</th>' for h in head)
                   + '<th>Total</th><th>% a favor</th>'
                   '<th>Con la mayoría</th></tr></thead><tbody>'
@@ -3305,7 +3690,8 @@ no publica el plano de curules.</figcaption></figure>"""
                   + ('<p class="sm mut">Ojo: este desglose se calcula sobre '
                      'nuestra lectura de la lista nominal, que no cuadra con la '
                      f'cifra del encabezado. {flag}</p>'
-                     if not roster_ok else ""))
+                     if not roster_ok else "")
+                  + "</details>")
 
     # who broke with their bloc
     outliers = []
@@ -3416,7 +3802,7 @@ no publica el plano de curules.</figcaption></figure>"""
                 f'<td class="who2"><span class="bl {gp(p)}">{bench_logo(p, r, 24)}'
                 f'<span class="nm">{esc(p)}</span></span></td>'
                 f'<td>{esc((x["leg"]["district"] if x["leg"] else "") or "—")}</td></tr>')
-        roster = f"""<section><h2>Cómo votó cada quien ({len(rows)})</h2>
+        roster = f"""<section id="quien"><h2>Cómo votó cada quien ({len(rows)})</h2>
 {gloss}
 <div class="filters">
 <input id="q" type="search" placeholder="Busca a tu parlamentario o su región"
@@ -3491,7 +3877,7 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
     if bill:
         billlink = (
             f'<p>Corresponde al proyecto <a href="{bill_url(r, bill)}">'
-            f'{esc(bill["code"])}</a>: {esc((bill["title"] or "")[:160])}.'
+            f'{esc(bill["code"])}</a>: {esc(clip(bill["title"], 160))}.'
             + ("" if v["bill_id"] else
                ' <span class="sm mut">Vínculo deducido del número de proyecto '
                'citado en el asunto: el acta no trae un campo que lo '
@@ -3642,7 +4028,7 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
             'parlamentario en esta ocasión, porque el Congreso tampoco lo '
             'publicó.</p>'
             + (f'<p class="sm mut">{esc(v["parse_note"])}</p>'
-               if v["parse_note"] else "") + f'{pres}</section>')
+               if v["parse_note"] else "") + hemi + f'{pres}</section>')
     else:
         lede_tail = (f': {yes} a favor, {no} en contra, {ab} abstenciones'
                      + (f' y {novote} sin votar' if novote else "")
@@ -3680,7 +4066,7 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
 <section><h2>Descarga y cita</h2>
 {f'<p><a href="{esc(v["slug"])}.csv">Descargar esta votación en CSV</a> — una fila por parlamentario, con su identificador estable, nombre, grupo, circunscripción, sentido del voto y el estado de fiabilidad de la lectura.</p>' if rows else '<p>No hay CSV que descargar: sin votación nominal no hay filas que exportar.</p>'}
 <p class="sm mut">Cita sugerida: «Votación nominal {esc(CHAMBER[ch])},
-{fecha(v["held_on"])}: {esc((v["subject"] or "")[:80])}», consultada el
+{fecha(v["held_on"])}: {esc(clip(v["subject"], 80))}», consultada el
 {fecha(dt.date.today().isoformat())}.</p></section>
 {prov([
     f'Acta publicada por {esc(CHAMBER[ch])}: '
@@ -3695,7 +4081,9 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
     f'Identificador interno de esta votación: <code>{esc(v["id"])}</code>.',
 ])}
 """
-    return shell(f'{(v["subject"] or v["id"])[:70]} · votación', body, depth=1,
+    return shell(short_title(CHAMBER_SHORT[ch] + " " + (fecha(v["held_on"]) or ""),
+                             v["subject"] or v["id"], 58) + " · votación",
+                 body, depth=1,
                  desc=f'Votación nominal en {CHAMBER[ch]}, {fecha(v["held_on"])}.')
 
 
@@ -4161,10 +4549,9 @@ def people_grid(legs, r="", per_bench=False):
         # yet — or that the chamber deletes from under us — leaves a lettered
         # tile rather than an empty grey rectangle.
         ini = esc(initials(L["full_name"]))
-        ph = (f'<span class="ph"><i aria-hidden="true">{ini}</i>'
-              f'<img loading="lazy" decoding="async" '
-              f'src="{esc(L["photo_url"])}" alt=""></span>' if L["photo_url"]
-              else f'<span class="noph">{ini}</span>')
+        img = photo_img(L, r, 400, 500, "(min-width:760px) 190px, 45vw")
+        ph = (f'<span class="ph"><i aria-hidden="true">{ini}</i>{img}</span>'
+              if img else f'<span class="noph">{ini}</span>')
         out.append(
             f'<li class="{gp(L["party"])}"><a href="{leg_url(r, L["slug"])}">'
             f'{ph}<span class="bar"></span><span class="cap">'
@@ -4250,7 +4637,7 @@ def render_bancada(d, party, today):
         vrows = ('<div class="benchrows">' + "".join(
             f'<div class="brow"><a class="bl" href="{vote_url(r, v)}">'
             f'<span class="nm">{fecha(v["held_on"])} · '
-            f'{esc((v["subject"] or "")[:60])}</span></a>'
+            f'{esc(clip(v["subject"], 60))}</span></a>'
             + stack_bar([(pos_col(k), f"{pos(k)[0]} {c.get(k, 0)}", c.get(k, 0))
                          for k in seen], sum(c.values()))
             + f'<span class="bn">{sum(c.values())}</span>'
@@ -4288,11 +4675,7 @@ def render_bancada(d, party, today):
 <a href="{r}bancadas.html">Bancadas</a> › {esc(party)}</div>
 <div class="bhead">{bench_logo(party, r, 76)}
 <div><span class="eyebrow">Grupo parlamentario</span>
-<h1>{esc(party)}</h1>
-<p class="sm mut" style="margin:6px 0 0">Logotipo de {esc(party)}:
-{logo_credit_line(party)} · <a href="{cr}">autoría y licencia de todos los
-logotipos</a>. Usado para identificar al grupo; el partido no respalda este
-sitio.</p></div></div>
+<h1>{esc(party)}</h1></div></div>
 <p class="lede">{len(mem)} parlamentarios en ejercicio: {len(dips)} en la
 Cámara de Diputados y {len(sens)} en el Senado. Aquí está quiénes son, cómo ha
 votado el grupo en cada votación nominal publicada y qué ha firmado.</p>
@@ -4317,9 +4700,9 @@ de comisiones publicados, que hoy son solo los del Senado</small></dd></div>
     f'Padrón, foto, bancada y circunscripción: portales de las cámaras, vía su '
     f'API REST.',
     f'Votaciones nominales: las actas en PDF de cada sesión.',
-    f'Logotipo: propiedad de {esc(party)}, tomado de Wikimedia Commons y usado '
-    f'aquí para identificar al grupo. <a href="{cr}">Autoría y licencia de '
-    f'cada logotipo</a>.',
+    f'Logotipo de {esc(party)}: {logo_credit_line(party)}. Se usa aquí para '
+    f'identificar al grupo; el partido no respalda este sitio. '
+    f'<a href="{cr}">Autoría y licencia de cada logotipo</a>.',
     f'Regenerado el {fecha(today)}.'])}"""
     return shell(f"{party} · bancada", body, 1,
                  desc=f"{party}: {len(mem)} parlamentarios, cómo vota el grupo "
@@ -4366,24 +4749,89 @@ identificarlos, no porque respalden este sitio.
 
 # --------------------------------------------------------------- list pages
 
+def pager(name, n, total):
+    """Anterior · 1 … 47 48 49 … 98 · Siguiente.
+
+    The largest facet is 98 pages and printing all 98 numbers was five rows of
+    44 px chrome above and below every list. A window plus the ends is the same
+    navigation in one row."""
+    if total < 2:
+        return ""
+    href = (lambda i: f'{name}{"" if i == 1 else "-" + str(i)}.html')
+    want = sorted({1, 2, n - 1, n, n + 1, total - 1, total}
+                  & set(range(1, total + 1)))
+    out, last = [], 0
+    if n > 1:
+        out.append(f'<a href="{href(n - 1)}" rel="prev">‹ Anterior</a>')
+    for i in want:
+        if i - last > 1:
+            out.append('<span class="mut">…</span>')
+        out.append(f'<span class="on" aria-current="page">{i}</span>' if i == n
+                   else f'<a href="{href(i)}">{i}</a>')
+        last = i
+    if n < total:
+        out.append(f'<a href="{href(n + 1)}" rel="next">Siguiente ›</a>')
+    return (f'<nav class="pager" aria-label="Páginas de este listado">'
+            + "".join(out) + f'<span class="mut">{n} de {total}</span></nav>')
+
+
 def paginate(name, title, intro, rows_html, depth, per=PER_PAGE, prov_lines=()):
     """Write name.html, name-2.html … Each page carries a filter box over its
     own rows. ponytail: no server, so the filter is per page, not per corpus;
-    a real cross-corpus search needs a JSON index and fetch()."""
+    a real cross-corpus search needs a JSON index and fetch().
+
+    `rows_html` is either plain `<li>` strings or `(grupo, repetido, <li>)`
+    triples. With triples the page gets two things a 150-row list needs:
+
+    · a sticky heading whenever the group changes, because an undifferentiated
+      run of rows is dozens of screens with nothing to steer by, and the month
+      is the one thing every row in these lists has; and
+
+    · the hoist. `repetido` is a chip that may or may not be worth printing per
+      row. When the same one lands on most of THIS page — 162 of 250 rows said
+      `EN COMISIÓN`, 19 of 24 on the tail page said `PUBLICADA EN EL DIARIO
+      OFICIAL EL PERUANO` — it is said once at the top and struck from the rows
+      that agree with it, so what is left in the scroll is the exceptions.
+      Computed per page and not per facet: which state dominates changes as you
+      page through a list sorted by date.
+    """
+    grouped = bool(rows_html) and isinstance(rows_html[0], tuple)
     pages = [rows_html[i:i + per] for i in range(0, len(rows_html), per)] or [[]]
     out = []
     for n, chunk in enumerate(pages, 1):
-        nav = ""
-        if len(pages) > 1:
-            nav = '<div class="pager">' + "".join(
-                f'<span class="on">{i}</span>' if i == n else
-                f'<a href="{name}{"" if i == 1 else "-" + str(i)}.html">{i}</a>'
-                for i in range(1, len(pages) + 1)) + "</div>"
-        body = f"""{intro}
+        nrows, hoist = len(chunk), ""
+        if grouped:
+            tally = {}
+            for _g, rep, _li in chunk:
+                if rep:
+                    tally[rep] = tally.get(rep, 0) + 1
+            drop, k = max(tally.items(), key=lambda kv: kv[1], default=((), 0))
+            if k < max(8, 0.4 * nrows):
+                drop = ()
+            else:
+                word = re.sub("<[^>]+>", " ", drop[-1]).strip()
+                hoist = (f'<p class="sm mut"><b>{num(k)} de las {num(nrows)} '
+                         f'filas de esta página</b> están en el mismo estado, '
+                         f'«{esc(word)}»: se dice aquí y no {num(k)} veces más '
+                         f'abajo. Las {num(nrows - k)} que llevan etiqueta son '
+                         f'las que están en otro.</p>')
+            marked, last = [], object()
+            for g, rep, li in chunk:
+                if g != last:
+                    kk = sum(1 for g2, _r, _l in chunk if g2 == g)
+                    marked.append(f'<li class="gh">{esc(g)}<b>{num(kk)}</b></li>')
+                    last = g
+                if drop and rep == drop:
+                    for x in drop:
+                        li = li.replace(x, "")
+                marked.append(li)
+            chunk = marked
+        nav = pager(name, n, len(pages))
+        body = f"""{intro}{hoist}
 <div class="filters"><input id="q" type="search"
- placeholder="Filtrar esta página ({len(chunk)} de {len(rows_html)})"
+ placeholder="Filtrar esta página ({nrows} de {len(rows_html)})"
  aria-label="Filtrar"></div>
-<ul class="feed" id="ls">{"".join(chunk)}</ul>{nav}
+<ul class="feed{" nostg" if drop and k == nrows else ""}" id="ls">{"".join(chunk)}</ul>{nav}
 {FILTER_JS}
 {prov(list(prov_lines)) if prov_lines else ""}"""
         out.append((f'{name}{"" if n == 1 else "-" + str(n)}.html',
@@ -4414,6 +4862,9 @@ def main():
     src_logos = ROOT / "assets" / "logos"
     if src_logos.is_dir():
         shutil.copytree(src_logos, OUT / "logos", dirs_exist_ok=True)
+    # Same rule for the 190 portraits: tracked input under assets/, copied out.
+    if PHOTOS.is_dir():
+        shutil.copytree(PHOTOS, OUT / "photos", dirs_exist_ok=True)
     con = db.connect(DBP)
     d = load(con)
     today = dt.date.today().isoformat()
@@ -4500,12 +4951,13 @@ def main():
                  f'<a href="../proyectos.html">Proyectos de ley</a></div>'
                  f'<span class="eyebrow">{num(len(bs))} proyectos</span>'
                  f'<h1>{esc(title)}</h1>'
-                 f'<p><a href="{key}.csv">Descargar estos {num(len(bs))} '
+                 + stage_mix(bs)
+                 + f'<p><a href="{key}.csv">Descargar estos {num(len(bs))} '
                  f'proyectos en CSV</a> — el filtro completo, no solo la página '
                  f'que está viendo: una fila por proyecto, con estado, etapa, '
                  f'comisiones, número de firmas y el enlace a su ficha.</p>')
-        for fn, htm in paginate(key, title, intro,
-                                [bill_row("../", b) for b in bs], 1, prov_lines=src):
+        for fn, htm in paginate(key, title, intro, bill_feed("../", bs), 1,
+                                prov_lines=src):
             write(OUT / "proyectos" / fn, htm)
             n["listado"] += 1
 
@@ -4650,10 +5102,9 @@ del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
         plines = ctte_prov(d, c, today)
         if bs:
             intro += (f'<h2 style="margin-top:34px">Proyectos de ley en esta '
-                      f'comisión ({num(len(bs))})</h2>')
+                      f'comisión ({num(len(bs))})</h2>' + stage_mix(bs))
             for fn, htm in paginate(c["slug"], c["name"], intro,
-                                    [bill_row("../", b) for b in bs], 1,
-                                    prov_lines=plines):
+                                    bill_feed("../", bs), 1, prov_lines=plines):
                 write(OUT / "comision" / fn, htm)
                 n["listado"] += 1
         else:
@@ -4662,22 +5113,40 @@ del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
                         desc=f'Composición y proyectos de la {c["name"]}.'))
             n["listado"] += 1
 
-    # ---- committee index
-    crows = []
-    for c in sorted(d["cttes"].values(),
-                    key=lambda c: (-(c["per_par"] or 0), c["name"])):
+    # ---- committee index. This is the page a reader lands on the moment they
+    # tap Comisiones, and it was 35 identical grey rows. The one number that
+    # differs between one comisión and the next is how many bills are parked in
+    # it — which is also the page's own thesis — so it is drawn, ordered and
+    # grouped by chamber instead of being a word at the end of a meta line.
+    cttes = sorted(d["cttes"].values(),
+                   key=lambda c: (-(c["per_par"] or 0), c["chamber"] or "C",
+                                  -len(d["ctte_bills"].get(c["id"], [])), c["name"]))
+    ctop = max((len(d["ctte_bills"].get(c["id"], [])) for c in cttes), default=0) or 1
+    ctot = sum(len(d["ctte_bills"].get(c["id"], [])) for c in cttes) or 1
+    crows, cg = [], object()
+    for c in cttes:
         ms = d["ctte_mem"].get(c["id"], [])
         tit = sum(1 for m in ms if m["role"] == "titular" and not m["amendment"])
         nb = len(d["ctte_bills"].get(c["id"], []))
-        meta = " · ".join(x for x in [
-            f'{esc(CHAMBER_SHORT[c["chamber"] or "C"])} '
-            f'{c["per_par"]}-{c["per_par"] + 5}' if c["per_par"] else "",
-            f"{tit} titulares" if tit else
-            "solo cambios por oficio" if ms else "composición no publicada",
-            f"{num(nb)} proyectos" if nb else "sin proyectos en nuestra copia",
-        ] if x)
-        crows.append(f'<li><span class="m">{meta}</span>'
-                     f'<a class="t" href="{ctte_url("", c)}">{esc(c["name"])}</a></li>')
+        g = (f'{CHAMBER[c["chamber"] or "C"]} · {c["per_par"]}-{c["per_par"] + 5}'
+             if c["per_par"] else CHAMBER[c["chamber"] or "C"])
+        if g != cg:
+            cg = g
+            k = sum(1 for c2 in cttes
+                    if (f'{CHAMBER[c2["chamber"] or "C"]} · '
+                        f'{c2["per_par"]}-{c2["per_par"] + 5}'
+                        if c2["per_par"] else CHAMBER[c2["chamber"] or "C"]) == g)
+            crows.append(f'<li class="gh">{esc(g)}<b>{k}</b></li>')
+        meta = (f"{tit} titulares" if tit else
+                "solo cambios por oficio" if ms else "composición no publicada")
+        crows.append(
+            f'<li><a href="{ctte_url("", c)}">'
+            f'<span class="lbl">{esc(c["name"])}<small>{esc(meta)}</small></span>'
+            f'<span class="track"><i style="width:{max(100 * nb / ctop, 0.6):.2f}%;'
+            f'background:var(--wait)"></i></span>'
+            f'<span class="n">{num(nb)}</span>'
+            f'<span class="pc">{pctxt(nb, ctot) if nb else "sin copia"}</span>'
+            f'</a></li>')
     withm = sum(1 for ms in d["ctte_mem"].values()
                 if any(not m["amendment"] for m in ms))
     body = f"""<span class="eyebrow">Comisiones</span>
@@ -4692,7 +5161,10 @@ la Cámara de Diputados todavía no ha publicado el diario de la sesión en que
 aprobó los suyos, de modo que de sus comisiones solo existe el nombre.</div>
 <div class="filters"><input id="q" type="search"
  placeholder="Filtrar por nombre, cámara o periodo" aria-label="Filtrar comisiones"></div>
-<ul class="feed" id="ls">{"".join(crows)}</ul>
+<ul class="ranked" id="ls">{"".join(crows)}</ul>
+<p class="sm mut" id="cnt">La barra es cuántos proyectos de ley están hoy en cada
+comisión, sobre la más cargada de todas. Es el dato que decide si una comisión
+puede dictaminar lo que tiene encima.</p>
 {FILTER_JS}
 {prov([
     f'Nombres y asignación de proyectos: expedientes en <code>{API}</code>.',
@@ -4739,9 +5211,13 @@ aprobó los suyos, de modo que de sus comisiones solo existe el nombre.</div>
 <h3><span class="chip {ch.lower()}">{esc(CHAMBER[ch])}</span></h3>
 {hall_svg(mem, ch)}
 {bench_split(mem, lambda L: L["party"], "")}
-<figcaption>Un círculo por escaño, agrupados por bancada a lo largo del arco.
-Cada uno enlaza a la ficha de quien lo ocupa y lleva su nombre; el orden dentro
-de la sala es el de este sitio, porque el Congreso no publica el plano real de
+<figcaption>Un escaño por parlamentario, agrupados por bancada a lo largo del
+arco. Cada bancada tiene su color <b>y su figura</b> —círculo, cuadrado, rombo,
+triángulo, hexágono, anillo— porque seis colores no se distinguen entre sí en
+las quince combinaciones posibles cuando quien mira no ve el color igual que
+usted; la leyenda de abajo dibuja la misma figura que el asiento. Cada escaño
+enlaza a la ficha de quien lo ocupa y lleva su nombre; el orden dentro de la
+sala es el de este sitio, porque el Congreso no publica el plano real de
 curules.</figcaption></figure>"""
     # The roster is the page people actually come for, so it opens with the
     # search and is cut into bench sections with their own headings and
@@ -4803,36 +5279,86 @@ q.addEventListener("input",sync);sync();}})()
 {prov([
     'Padrón, foto, bancada y circunscripción: portales de la '
     '<a href="https://diputados.congreso.gob.pe/">Cámara de Diputados ↗</a> y del '
-    '<a href="https://senado.congreso.gob.pe/">Senado ↗</a>, vía su API REST.',
+    '<a href="https://senado.congreso.gob.pe/">Senado ↗</a>, vía su API REST. '
+    'Los retratos son copias reducidas alojadas aquí, no enlaces al servidor de '
+    'las cámaras: así no dependemos de que no cambien de ruta, y la página no '
+    'descarga 37 MB para dibujar miniaturas.',
     f'Logotipos de bancada: Wikimedia Commons, '
     f'<a href="{LOGO_CREDIT}">autoría y licencia de cada uno</a>.',
     f'Regenerado el {fecha(today)}.'])}"""
     write(OUT / "parlamentarios.html", shell("Parlamentarios 2026-2031", body, 0))
     n["listado"] += 1
 
-    # ---- motions index
-    mrows = []
+    # ---- motions index. 107 rows, and 107 of them carried the same chip:
+    # «PARA SER VISTA POR LA JUNTA DE PORTAVOCES», repeated with zero variance
+    # down 41 473 px. What actually differs between one moción and the next is
+    # what kind of instrument it is — 87 of the 107 are greetings — so that is
+    # what groups the page and what the rail is coloured by. Said once above.
+    fams, seen_st = {}, {m["status"] or "—" for m in d["motions"]}
     for m in d["motions"]:
-        sg = d["signers"].get(m["id"], [])
-        who = ", ".join(
-            (f'<a href="parlamentario/{s["leg"]["slug"]}.html">'
-             f'{esc(nice_name(s["leg"]["full_name"]))}</a>' if s["leg"]
-             else esc(nice_name(s["name_raw"]))) for s in sg[:6])
-        mrows.append(
-            f'<li id="m-{esc(m["id"])}"><span class="m">{esc(m["code"])} · '
-            f'{esc(CHAMBER_SHORT[m["chamber"]])} · {fecha(m["presented_on"])} · '
-            f'{esc(m["kind"] or "")}</span>'
-            f'<span class="t">{esc((m["summary"] or "").strip()[:400])}</span>'
-            f'<div class="sm mut sign" style="margin-top:6px">Firman: {who}'
-            f'{" y " + str(len(sg) - 6) + " más" if len(sg) > 6 else ""}</div>'
-            f'<span class="chip wait" style="margin-top:6px">'
-            f'{esc(m["status"] or "")}</span></li>')
+        fam = moc_family(m["kind"])
+        fams.setdefault(fam, []).append(m)
+    mrows = []
+    for fam in MOC_ORDER:
+        ms = fams.get(fam)
+        if not ms:
+            continue
+        label, tone = MOC_FAMILY[fam]
+        # A moción de saludo is a formula: «que el Congreso salude a X por su
+        # aniversario». 87 of them at full height were 30 000 px of the page,
+        # and none of the twenty that do something were visible past them. The
+        # routine instrument gets the compact row and says so in its heading;
+        # the twenty that ask for an investigation, an interpelación or a
+        # comisión get the full one, and come first.
+        small = fam == "saludo"
+        mrows.append(f'<li class="gh">{esc(label)}<b>{num(len(ms))}</b></li>')
+        if small:
+            mrows.append('<li class="ghn sm mut" style="padding:0 0 8px">Fila '
+                         'compacta: son fórmulas de cortesía y no obligan a '
+                         'nada. Cada una enlaza a sus firmantes desde la ficha '
+                         'de quien la presentó.</li>')
+        for m in ms:
+            sg = d["signers"].get(m["id"], [])
+            who = ", ".join(
+                (f'<a href="parlamentario/{s["leg"]["slug"]}.html">'
+                 f'{esc(nice_name(s["leg"]["full_name"]))}</a>' if s["leg"]
+                 else esc(nice_name(s["name_raw"]))) for s in sg[:1 if small else 3])
+            keep = 1 if small else 3
+            mrows.append(
+                f'<li class="r {tone}" id="m-{esc(m["id"])}">'
+                f'<span class="stg">{esc(label)}</span>'
+                f'<span class="m">{esc(m["code"])} · '
+                f'{esc(CHAMBER_SHORT[m["chamber"]])} · {fecha(m["presented_on"])}</span>'
+                f'<span class="t">{esc(clip(m["summary"], 120 if small else 220))}</span>'
+                f'<div class="sm mut sign" style="margin-top:6px">Firman: {who}'
+                f'{" y " + str(len(sg) - keep) + " más" if len(sg) > keep else ""}</div>'
+                + (f'<span class="chip wait" style="margin-top:6px">'
+                   f'{esc(m["status"] or "")}</span>' if len(seen_st) > 1 else "")
+                + "</li>")
+    mmix = ('<figure style="margin:18px 0 0">'
+            + stack_bar([(MOC_COL[f], MOC_FAMILY[f][0], len(fams[f]))
+                         for f in MOC_ORDER if fams.get(f)], len(d["motions"]),
+                        height=18)
+            + key_list([(MOC_COL[f], esc(MOC_FAMILY[f][0]),
+                         f'{len(fams[f])} · {pctxt(len(fams[f]), len(d["motions"]))}')
+                        for f in MOC_ORDER if fams.get(f)])
+            + '<figcaption>De qué tipo son las mociones presentadas. Las de saludo '
+              'no obligan a nadie a nada; las de investigación, interpelación e '
+              'invitación son control político. Abajo van en ese orden, no en el '
+              'de llegada.</figcaption></figure>') if d["motions"] else ""
+    onest = (f'<p class="sm mut">Las {len(d["motions"])} están en el mismo '
+             f'estado, «{esc(list(seen_st)[0])}»: la Junta de Portavoces decide '
+             f'cuáles se ven en el Pleno y en qué orden. Lo decimos aquí una vez '
+             f'en lugar de {len(d["motions"])} veces más abajo.</p>'
+             if len(seen_st) == 1 and d["motions"] else "")
     body = f"""<span class="eyebrow">Mociones de orden del día</span>
 <h1>{len(d["motions"])} mociones</h1>
 <p class="lede">La moción es el instrumento con el que el Congreso se pronuncia sin
 legislar: saludos, pedidos de interpelación, conformación de comisiones
 investigadoras. En los primeros días de este Congreso hay más mociones que
 proyectos de ley, así que es aquí donde se ve la actividad real.</p>
+{mmix}
+{onest}
 <div class="filters"><input id="q" type="search"
  placeholder="Filtrar por texto, firmante o tipo" aria-label="Filtrar mociones"></div>
 <ul class="feed" id="ls">{"".join(mrows)}</ul>
@@ -4894,7 +5420,7 @@ quiénes rompieron con su grupo y la lista completa descargable.</p>{extra}
     print(f"tiempo              : {time.time() - t0:.1f}s -> {OUT}")
     print("CAPS: fichas de parlamentario listan 60 proyectos y 40 mociones "
           "recientes (el total sí se muestra); los listados paginan de "
-          f"{PER_PAGE} en {PER_PAGE} sin recortar nada.")
+          f"{PER_PAGE} en {PER_PAGE} sin recortar nada, agrupados por mes.")
     return n
 
 
@@ -5123,7 +5649,7 @@ def render_home(d, base, today):
 {"<h3 style='margin-top:18px'>Últimas mociones</h3><ul class='feed'>" + "".join(
     f'<li><span class="m">{esc(m["code"])} · {fecha(m["presented_on"])}</span>'
     f'<a class="t" href="mociones.html#m-{esc(m["id"])}">'
-    f'{esc((m["summary"] or "").strip()[:120])}</a></li>' for m in ms) + "</ul>" if ms else ""}
+    f'{esc(clip(m["summary"], 120))}</a></li>' for m in ms) + "</ul>" if ms else ""}
 </div>""")
 
     # How many bills a Congress files, month by month. The completed 2021-2026
@@ -5185,10 +5711,18 @@ enero y julio de cada año, que es cuando abren las legislaturas.
     last = max((b["presented_on"] or "") for b in d["bills"]) if d["bills"] else today
     body = f"""<span class="eyebrow">Congreso de la República del Perú · 2026-2031</span>
 <h1>Qué está haciendo el Congreso ahora mismo</h1>
-<p class="lede">Un registro público del Congreso bicameral: 130 diputados, 60
-senadores, cada proyecto de ley con la etapa exacta en la que está y lo que le
-falta, cada moción con quién la firmó y cada votación nominal con el detalle de
-quién votó qué. Último movimiento registrado: <b>{fecha(last)}</b>.</p>
+<p class="lede">130 diputados y 60 senadores, cada proyecto de ley con la etapa
+en la que está y cada votación con quién votó qué. Último movimiento
+registrado: <b>{fecha(last)}</b>.</p>
+
+<section><h2>Los 190 escaños, uno por uno</h2>
+<div class="halls">{"".join(halls)}</div>
+<p class="sm mut" style="margin-top:16px">Un escaño por parlamentario,
+agrupados por bancada a lo largo del arco: cada bancada tiene su color y su
+figura, y la leyenda dibuja la misma figura que el asiento. Cada escaño lleva el
+nombre de quien lo ocupa y enlaza a su ficha;
+<a href="bancadas.html">las seis bancadas, una por una</a>. El orden dentro de
+la sala es el de este sitio: el Congreso no publica el plano de curules.</p></section>
 
 <section><h2>Empezar por aquí</h2><div class="facets">
 <a href="parlamentarios.html">Busque a su parlamentario <b>{len(d["legs"])}</b></a>
@@ -5198,15 +5732,6 @@ quién votó qué. Último movimiento registrado: <b>{fecha(last)}</b>.</p>
 <a href="bancadas.html">Las bancadas <b>{len(BENCH_ORDER)}</b></a>
 <a href="comisiones.html">Comisiones <b>{len(d["cttes"])}</b></a>
 </div></section>
-
-<section><h2>Los 190 escaños, uno por uno</h2>
-<div class="halls">{"".join(halls)}</div>
-<p class="sm mut" style="margin-top:16px">Un círculo por escaño, agrupados por
-bancada a lo largo del arco. Cada uno lleva el nombre de quien lo ocupa y enlaza
-a su ficha; <a href="bancadas.html">las seis bancadas, una por una</a>. El orden
-dentro de la sala es el de este sitio: el Congreso no publica el plano de
-curules.</p></section>
-
 <section><h2>Actividad del Congreso actual</h2>
 <dl class="tiles">
 <div class="tile"><dt>Proyectos presentados</dt><dd>{len(cur)}
@@ -5594,10 +6119,26 @@ def demo():
     # the file name, not the directory: «psicologos/» is a word in a bill text
     marks = [f"logos/{f}" for _s, _m, f in BENCH.values()]
     withlogo = 0
+    titles, heads, lists = {}, {}, []
     for p in pages:   # one read per page: this walks 15k files
         t = p.read_text()
         assert '<meta name="robots" content="noindex,nofollow">' in t, f"{p}: indexable"
         assert "acerca.html" in t, f"{p}: no link to the legal page"
+        # Harvested on the pass we are already making, so the checks below cost
+        # no second walk over 17 500 files.
+        titles[p] = re.search(r"<title>(.*?)</title>", t, re.S).group(1)
+        h = re.search(r"<h1[^>]*>(.*?)</h1>", t, re.S)
+        heads[p] = h.group(1) if h else ""
+        # Nothing this site paints may come from another host. 190 portraits
+        # were hotlinked at full resolution — 37.7 MB to fill 38 px thumbnails,
+        # and one upstream rename from a site with no faces on it.
+        assert not re.search(r'<img[^>]+src="https?:', t), \
+            f"{p}: an <img> still points at another host"
+        m0 = re.search(r'<ul class="(?:feed|ranked)[^"]*" id="ls">', t)
+        if m0:
+            body = t[m0.end():].split("</ul>")[0]
+            if body.count("<li") >= 20:
+                lists.append((p, t, body))
         for g in ghosts:
             assert f">{g}<" not in t, f"{p}: names the phantom committee {g}"
         # The licence travels with the work. Tested on every page that paints a
@@ -5649,7 +6190,8 @@ def demo():
         ns, na = seats_in(t, "hemi-vote")
         assert ns == cnt, f"{pg.name}: {ns} escaños dibujados, {cnt} filas"
         assert na >= cnt - 3, f"{pg.name}: {na} enlaces para {cnt} escaños"
-        assert "var(--si)" in t or "var(--no)" in t, f"{pg.name}: escaños sin color de voto"
+        assert 'fill="var(--si)"' in t or 'fill="var(--no)"' in t, \
+            f"{pg.name}: escaños sin color de voto"
 
     # ---- la leyenda que descifra el diagrama. The key used to separate the
     # states by colour alone: three of its four swatches lost their silhouette
@@ -5677,8 +6219,10 @@ def demo():
                         f"{pg.name}: entrada de leyenda sin figura: {li[:90]}"
             assert len(sigs) == len(set(sigs)), \
                 f"{pg.name}: dos entradas de una leyenda con la misma figura"
-        # the caption promises greyscale legibility: it has to say at what width
-        if 'id="hemi-vote"' in t:
+        # the caption promises greyscale legibility: it has to say at what
+        # width. Only where the arc is coloured by the vote — the empty chamber
+        # drawn for a roll call with no nominal list promises nothing.
+        if 'id="hemi-vote"' in t and 'id="quien"' in t:
             assert "8 px" in t and "ilustración" in t, \
                 f"{pg.name}: el pie promete blanco y negro sin decir a qué ancho"
         # ...and the CSS class of every swatch that still is a <span> exists
@@ -5831,6 +6375,204 @@ def demo():
     for fig in blk.split('<figure class="strip"')[1:]:
         assert "de 130 en" in fig or "de 60 en" in fig, \
             "una tira comparativa sin su denominador"
+
+    # ---- nada se corta a media palabra. Enseñar este sitio es mandar un
+    # enlace, y un enlace cuya vista previa dice «…LA AMPLIACIÓN DE LA INFRA»
+    # está roto. El <title> de 26% de las fichas de proyecto lo hacía.
+    assert clip("uno dos tres", 8) == "uno dos…"
+    assert clip("uno dos tres", 40) == "uno dos tres"
+    assert clip("uno,  dos\ntres", 6) == "uno…", clip("uno,  dos\ntres", 6)
+    assert clip("supercalifragilistico", 6) == "superc…"   # una sola palabra
+    assert short_title("PL 1/2026", "") == "PL 1/2026"
+
+    def whole_word(shown, full):
+        """`shown` may be shorter than `full`, but never mid-word."""
+        shown = html.unescape(shown).strip()
+        full = " ".join(html.unescape(full).split())
+        if not shown.endswith("…"):
+            return True
+        head = shown[:-1].rstrip()
+        i = full.find(head)
+        if i < 0:
+            return False
+        j = i + len(head)
+        return j >= len(full) or not (head[-1:].isalnum() and full[j].isalnum())
+
+    cut = 0
+    for b in d2["bills"]:
+        p = (OUT / "proyecto" / str(b["per_par"]) / (b["chamber"] or "C")
+             / f'{b["ply_num"]}.html')
+        ttl, h1 = titles[p], heads[p]
+        assert whole_word(ttl, f'{b["code"]} · {b["title"] or ""}'), \
+            f'{b["code"]}: <title> cortado a media palabra: {ttl!r}'
+        assert whole_word(h1, b["title"] or ""), \
+            f'{b["code"]}: h1 cortado a media palabra: {h1!r}'
+        assert b["code"] in html.unescape(ttl), \
+            f'{b["code"]}: el <title> no dice de qué expediente es'
+        cut += ttl.endswith("…")
+    for p, ttl in titles.items():
+        assert "\n" not in ttl, f"{p}: un <title> con salto de línea"
+
+    # ---- cada listado largo lleva su dispositivo gráfico. Las 311 páginas de
+    # listado eran 250 filas idénticas sin un solo svg, img, barra, riel ni
+    # monograma: el mismo fallo —«una tabla de 130 nombres no se puede leer»—
+    # que este trabajo existe para arreglar, sobre la superficie más larga.
+    assert len(lists) >= 100, f"solo {len(lists)} listados largos encontrados"
+    for p, t, body in lists:
+        assert 'class="gh"' in body or 'class="rail"' in t or 'class="bsec' in t, \
+            f"{p.name}: {body.count('<li')} filas sin ninguna agrupación"
+        assert ('<li class="r ' in body or "rowmark" in body
+                or 'class="track"' in body), \
+            f"{p.name}: filas sin marca por fila"
+        assert ('<div class="bar"' in t or 'class="people"' in t
+                or 'class="ranked"' in t or "<svg" in t), \
+            f"{p.name}: listado sin ningún gráfico"
+        # y ninguna repite un dato constante fila por fila
+        for chip in re.findall(r'<span class="chip \w+"[^>]*>([^<]{12,})</span>',
+                               body):
+            rep = body.count(f">{chip}</span>")
+            assert rep <= max(10, 0.45 * body.count("<li")), \
+                f"{p.name}: «{chip.strip()[:40]}» repetido {rep} veces"
+
+    # ---- la paleta de bancadas, medida en los QUINCE pares y no solo en los
+    # cinco que se tocan en el arco. Misma aritmética que
+    # `dataviz/scripts/validate_palette.js`: matrices de Machado (2009) sobre
+    # RGB lineal y ΔE en OKLab ×100.
+    #
+    # El resultado, con `--pairs all`, es que NO pasa: 3.4 (protanopía, claro)
+    # y 7.1 (oscuro), y la paleta de referencia del propio validador saca 3.2
+    # en las mismas condiciones. Seis matices no se separan en quince pares; es
+    # aritmética, no falta de oficio. Por eso el arco tiene desde ahora una
+    # figura por bancada además del color, como la lista nominal tiene una por
+    # sentido de voto, y lo que se afirma aquí es lo que se puede sostener:
+    # contraste sobre la página, y una silueta distinta por bancada.
+    MACHADO = {
+        "protan": ((.152286, 1.052583, -.204868), (.114503, .786281, .099216),
+                   (-.003882, -.048116, 1.051998)),
+        "deutan": ((.367322, .860646, -.227968), (.280085, .672501, .047413),
+                   (-.011820, .042940, .968881)),
+        "tritan": ((1.255528, -.076749, -.178779), (-.078411, .930809, .147602),
+                   (.004733, .691367, .303900)),
+    }
+
+    def _lin(h):
+        return [x / 12.92 if x <= .04045 else ((x + .055) / 1.055) ** 2.4
+                for x in (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))]
+
+    def _oklab(v):
+        l = (.4122214708 * v[0] + .5363325363 * v[1] + .0514459929 * v[2]) ** (1 / 3)
+        m = (.2119034982 * v[0] + .6806995451 * v[1] + .1073969566 * v[2]) ** (1 / 3)
+        s = (.0883024619 * v[0] + .2817188376 * v[1] + .6299787005 * v[2]) ** (1 / 3)
+        return (.2104542553 * l + .7936177850 * m - .0040720468 * s,
+                1.9779984951 * l - 2.4285922050 * m + .4505937099 * s,
+                .0259040371 * l + .7827717662 * m - .8086757660 * s)
+
+    def _sim(h, kind):
+        v = _lin(h)
+        return [max(0.0, min(1.0, sum(r[i] * v[i] for i in range(3))))
+                for r in MACHADO[kind]]
+
+    def dE(a, b, kind=None):
+        x = _oklab(_sim(a, kind) if kind else _lin(a))
+        y = _oklab(_sim(b, kind) if kind else _lin(b))
+        return 100 * math.dist(x, y)
+
+    pairs = [(i, j) for i in range(1, 7) for j in range(i + 1, 7)]
+    assert len(pairs) == 15
+    report = []
+    for tok, mode in zip(themes, ("claro", "oscuro", "oscuro (toggle)")):
+        gps = [tok[f"gp{i}"] for i in range(7) if i]
+        worst_cvd = min(min(dE(gps[i - 1], gps[j - 1], k) for k in ("protan", "deutan"))
+                        for i, j in pairs)
+        worst_nor = min(dE(gps[i - 1], gps[j - 1]) for i, j in pairs)
+        worst_grey = min(_cr(gps[i - 1], gps[j - 1]) for i, j in pairs)
+        report.append((mode, worst_cvd, worst_nor, worst_grey))
+        # lo que sí se sostiene: 3:1 contra la página, ya comprobado arriba, y
+        # que ningún par sea literalmente el mismo color en los tres canales.
+        assert worst_nor >= 5.0, f"{mode}: dos bancadas a ΔE {worst_nor:.1f}"
+        assert worst_grey >= 1.0
+    # y la figura, que es el canal que sí separa los quince pares
+    shapes = [BENCH_SHAPE[i] for i in range(1, 7)]
+    assert len(set(shapes)) == 6, "dos bancadas con la misma figura"
+    for sh, _hollow in shapes:
+        assert sh in SHAPE, f"figura {sh} sin dibujo"
+    # y las seis cifras que el comentario de BENCH publica sobre los quince
+    # pares se releen del propio fuente y se recalculan: la afirmación anterior
+    # («every check PASS») sobrevivió porque nadie la volvía a medir.
+    src2 = pathlib.Path(__file__).read_text("utf-8")
+    claim15 = re.search(
+        r"light\s+worst all-pairs CVD ΔE ([\d.]+) \(protanopía\), normal vision "
+        r"([\d.]+)\n#\s+dark\s+worst all-pairs CVD ΔE ([\d.]+) \(protanopía\), "
+        r"normal vision ([\d.]+)\n#\s+greyscale, worst of fifteen: ([\d.]+):1 "
+        r"light, ([\d.]+):1 dark", src2)
+    assert claim15, "desapareció la medición de los quince pares"
+    got15 = [f"{report[0][1]:.1f}", f"{report[0][2]:.1f}",
+             f"{report[1][1]:.1f}", f"{report[1][2]:.1f}",
+             f"{report[0][3]:.2f}", f"{report[1][3]:.2f}"]
+    assert list(claim15.groups()) == got15, \
+        f"el comentario dice {claim15.groups()}; la hoja mide {got15}"
+    # la leyenda de bancada dibuja la figura del escaño, en toda página que
+    # pinte un hemiciclo de bancadas
+    for f in ("index.html", "parlamentarios.html"):
+        flat = re.sub(r"<title>.*?</title>", "",
+                      re.sub(r'style="[^"]*"', "", (OUT / f).read_text()))
+        for p6 in BENCH_ORDER:
+            if bench_url("", p6) in flat:
+                assert silhouette(swatch("", bench_shape(p6))) in flat, \
+                    f"{f}: la leyenda de {p6} no lleva la figura de su escaño"
+
+    # ---- la barra de navegación no puede esconder seis de sus ocho destinos
+    # sin decirlo: el degradado `local` descubre la sombra del borde que
+    # todavía tiene contenido detrás, y con ratón vuelve la barra de scroll.
+    assert "no-repeat local" in CSS and "@media(pointer:fine)" in CSS, \
+        "el scroller de la navegación se quedó sin señal de que hay más"
+
+    # ---- una escala, no una dispersión
+    used = sorted({float(x) for m in re.finditer(
+        r"font(?:-size)?\s*:\s*([^;}\n]+)", CSS)
+        for x in re.findall(r"(\d+(?:\.\d+)?)px", m.group(1))})
+    assert set(used) <= set(TYPE_SCALE), \
+        f"tamaños fuera de la escala: {sorted(set(used) - set(TYPE_SCALE))}"
+    assert len(used) >= 7, "la escala se quedó sin pasos"
+
+    # ---- los retratos son nuestros, con sus dos anchos y su texto alternativo
+    withphoto = [L for L in d2["legs"] if L["photo_url"]]
+    assert len(withphoto) >= 190, f"solo {len(withphoto)} con retrato"
+    for L in withphoto:
+        for w in PHOTO_W:
+            assert (OUT / "photos" / f'{L["slug"]}-{w}.jpg').is_file(), \
+                f'{L["slug"]}: falta el retrato de {w} px'
+        t = (OUT / "parlamentario" / f'{L["slug"]}.html').read_text()
+        assert f'photos/{L["slug"]}-400.jpg' in t and "srcset=" in t, \
+            f'{L["slug"]}: su ficha no sirve el retrato local'
+        assert f'alt="Retrato oficial de {esc(nice_name(L["full_name"]))}"' in t, \
+            f'{L["slug"]}: retrato sin texto alternativo'
+    big = max(p.stat().st_size for p in (OUT / "photos").iterdir())
+    assert big < 300_000, f"un retrato de {big} bytes: no se reescaló"
+
+    # ---- cada votación dibuja su hemiciclo, incluso la que no tiene lista
+    # nominal: que el registro no diga cómo votó nadie es un hecho del
+    # registro, y merece el mismo gráfico vacío.
+    for p in (OUT / "votacion").glob("*.html"):
+        assert 'id="hemi-vote"' in p.read_text(), f"{p.name}: votación sin hemiciclo"
+
+    # ---- el crédito del logotipo va debajo de lo que califica, no entre el h1
+    # y la entradilla, que es el segundo mejor sitio de la página.
+    for p6 in BENCH_ORDER:
+        bp = OUT / "bancada" / f"{bench_slug(p6)}.html"
+        if not bp.exists():
+            continue
+        t = bp.read_text()
+        head = t.split("<h1>")[1].split('<dl class="tiles"')[0]
+        assert "Wikimedia" not in head and "licencia" not in head, \
+            f"{p6}: el crédito del logotipo sigue encima del contenido"
+        assert "Wikimedia" in t.split('<div class="prov">')[1], \
+            f"{p6}: se perdió la obligación de atribuir"
+
+    print("paleta de bancadas, los 15 pares: " + " · ".join(
+        f"{m} CVD {a:.1f} / vista normal {b:.1f} / grises {c:.2f}:1"
+        for m, a, b, c in report[:2]))
+    print(f"títulos recortados en palabra entera: {cut} de {len(d2['bills'])}")
 
     # 2021 bills must reach people once the old roster lands; until then this
     # asserts the graph exists wherever the DB can support it.

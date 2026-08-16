@@ -20,10 +20,17 @@ python3 -m ingest.run expedientes  # dossiers: timeline, committees, documents
 python3 -m ingest.run votes        # roll-call PDFs + diario de debates + attendance
 python3 -m ingest.run textos       # the filed text of each bill, from its PDF
 python3 -m ingest.run status       # counts and coverage
+python3 -m ingest.photos           # 190 retratos -> assets/photos/ (una vez)
 
-python3 build.py                   # -> site/, ~15k pages in ~5s
+python3 build.py                   # -> site/, ~17.5k pages in ~43s
 python3 progress.py                # -> site/progress.html, the build board
 ```
+
+`assets/` holds the two inputs that are not in the database and are tracked in
+git: `assets/logos/` (six bench logos) and `assets/photos/` (190 portraits, two
+widths each, ~5 MB). `build.py` copies both into `site/`; nothing under `site/`
+is ever an input. `ingest.photos` downloads and downscales with ffmpeg and only
+fetches what is missing, so it is a one-off unless the padrón changes.
 
 Committee rosters come from the diario de debates rather than any API:
 `python3 -c "from ingest import db,committees as c; c.ingest(db.connect(),'S',
