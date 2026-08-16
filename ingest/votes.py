@@ -323,9 +323,25 @@ def _held_on(text):
     return None
 
 
+# The board PDFs print the tally table's column headers vertically, one letter
+# per line. `pdftotext` reads them as a horizontal run of isolated letters glued
+# to the end of the subject: «...APROBADA POR AMPLIA MAYORÍA V A T I A R M F O
+# IN I A P C O». Four or more one- and two-letter tokens in a row at the very
+# end are never prose, so they come off. Anchored at the end on purpose: «B)»
+# and «Y» inside a sentence keep their place.
+TRAIL_COLS = re.compile(r"(?:\s+[A-ZÁÉÍÓÚÜÑ]{1,2}\b){4,}\s*$")
+
+
+def _subject(text):
+    """One subject line, whitespace collapsed and the vertical column headers
+    taken off. Every subject this module writes goes through here."""
+    s = re.sub(r"\s+", " ", text or "").strip()
+    return TRAIL_COLS.sub("", s).strip() or None
+
+
 def _asunto(text):
     m = re.search(r"(?:ASUNTO|Asunto):\s*(.+?)\n\s*\n", text, re.S)
-    return re.sub(r"\s+", " ", m[1]).strip() if m else None
+    return _subject(m[1]) if m else None
 
 
 def rollcalls(pdf):
@@ -406,7 +422,7 @@ def parse(pdf, chamber, url, ordinals):
             "parsed": 0, "parse_note": None, "fetched_at": now,
         }
         if layout == "M":
-            v["subject"] = re.sub(r"\s+", " ", text).strip()
+            v["subject"] = _subject(text)
             v["result"] = "APROBADO" if "APROBAD" in _fold(text) else None
             v["parse_note"] = ("votación a mano alzada tras falla del sistema: "
                                "no se publicó lista nominal")

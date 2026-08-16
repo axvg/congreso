@@ -103,7 +103,7 @@ def render(cfg, cov, counts):
     verdicts = "".join(
         f'<article class="piece {"ok" if v.get("won") else "work"}">'
         f'<span class="stripe"></span><div><h3>{esc(v["page"])} '
-        f'&mdash; {esc(v["score"])}</h3><p>{v["gap"]}</p></div>'
+        f'&middot; {esc(v["score"])}</h3><p>{v["gap"]}</p></div>'
         f'<span class="tag">{"gana" if v.get("won") else esc(v["state"])}</span>'
         f"</article>" for v in cfg.get("verdicts", []))
     verdicts = f'<div class="board">{verdicts}</div>' if verdicts else (
@@ -160,7 +160,7 @@ def main():
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(render(cfg, cov, counts))
-    print(f"wrote {OUT} — coverage {cov['pct']}% ({cov['votes_parsed']}/{cov['votes']})")
+    print(f"wrote {OUT}, coverage {cov['pct']}% ({cov['votes_parsed']}/{cov['votes']})")
 
 
 if __name__ == "__main__":

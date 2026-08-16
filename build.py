@@ -11,6 +11,7 @@ import functools
 import html
 import io
 import math
+import os
 import pathlib
 import re
 import shutil
@@ -42,14 +43,14 @@ SEG = {"D": "diputados", "S": "senado", "C": "congreso"}
 # whole point of the site: `EN COMISIÓN` is not an answer, it is a code.
 STATUS = {
     "PRESENTADO": ("PRES",
-        "Ingresó al registro oficial. Todavía no ha sido debatido por nadie: "
-        "el siguiente paso es que el área de Trámite Documentario lo envíe a "
-        "una comisión dictaminadora.",
+        "Ingresó al registro oficial y nadie lo ha debatido todavía. El paso "
+        "siguiente es que Trámite Documentario lo envíe a una comisión "
+        "dictaminadora.",
         ["Decreto de envío a una o más comisiones.",
          "Estudio en comisión, que puede pedir opinión a ministerios y gremios."]),
     "EN COMISIÓN": ("COM",
         "Está en manos de una comisión, que debe estudiarlo y emitir un "
-        "dictamen. Es la etapa en la que más proyectos se detienen: abajo están "
+        "dictamen. Es la etapa en la que más proyectos se detienen. Abajo están "
         "las cifras del periodo anterior, cuántos salieron y cuántos se "
         "quedaron.",
         ["Dictamen de la comisión (favorable, favorable sustitutorio o de archivo).",
@@ -59,7 +60,7 @@ STATUS = {
         "Fue derivado a una comisión para su estudio.",
         ["Dictamen de la comisión.", "Con dictamen favorable, pasa al Orden del Día."]),
     "RETORNA A COMISIÓN": ("COM",
-        "El Pleno lo devolvió a comisión: el texto debatido no convenció y "
+        "El Pleno lo devolvió a comisión. El texto debatido no convenció y "
         "debe ser reformulado.",
         ["Nuevo dictamen con el texto corregido.",
          "Regreso al Orden del Día del Pleno."]),
@@ -76,7 +77,7 @@ STATUS = {
          "Debate y votación en el Pleno."]),
     "EN AGENDA CD": ("PLENO",
         "El Consejo Directivo lo tiene en agenda. Ese órgano decide qué se "
-        "debate y en qué orden: es el filtro entre el dictamen y el Pleno.",
+        "debate y en qué orden. Es el filtro entre el dictamen y el Pleno.",
         ["Acuerdo del Consejo Directivo para incorporarlo al Orden del Día.",
          "Debate y votación en el Pleno."]),
     "ORDEN DEL DÍA": ("PLENO",
@@ -123,14 +124,14 @@ STATUS = {
          "Si no hace ninguna de las dos, promulga el Presidente del Congreso.",
          "Publicación en el diario oficial El Peruano."]),
     "AUTÓGRAFA OBSERVADA": ("AUTOG",
-        "El Poder Ejecutivo observó la autógrafa: devolvió el texto al "
+        "El Poder Ejecutivo observó la autógrafa. Devolvió el texto al "
         "Congreso con reparos en lugar de promulgarlo.",
         ["Nuevo dictamen de la comisión sobre las observaciones.",
          "El Congreso puede allanarse a las observaciones o insistir; la "
          "insistencia requiere la mitad más uno del número legal."]),
     "ACUERDO DE COMISIÓN": ("COM",
-        "La comisión adoptó un acuerdo sobre el proyecto —acumularlo, pedir "
-        "opiniones, priorizarlo— sin que eso sea todavía un dictamen.",
+        "La comisión acordó algo sobre el proyecto, por ejemplo acumularlo o "
+        "pedir opiniones. Todavía no es un dictamen.",
         ["Dictamen de la comisión.", "Con dictamen favorable, pasa al Orden del Día."]),
     "EN DEBATE - COMISIÓN PERMANENTE": ("PLENO",
         "Se está debatiendo en la Comisión Permanente, que legisla sobre lo que "
@@ -159,7 +160,7 @@ STATUS = {
          "Entrada en vigencia al día siguiente de la publicación, salvo "
          "disposición distinta."]),
     "PUBLICADA EN EL DIARIO OFICIAL EL PERUANO": ("LEY",
-        "Es ley: fue promulgada y publicada en el diario oficial El Peruano.",
+        "Es ley. Se promulgó y se publicó en el diario oficial El Peruano.",
         []),
     "ACLARACIÓN": ("LEY",
         "Se publicó una fe de erratas o aclaración sobre el texto ya "
@@ -195,8 +196,8 @@ STAGE_BLURB = {
 def stages(per_par, chamber):
     """The track a bill has to walk. 2026 on is bicameral: origin -> revisora.
 
-    ponytail: no published state says "in the revising chamber" yet — the
-    vocabulary is still the unicameral one — so the REV node can be reached but
+    ponytail: no published state says "in the revising chamber" yet, the
+    vocabulary is still the unicameral one, so the REV node can be reached but
     never becomes the current one. When the Congress starts publishing a
     bicameral state, add it to STATUS with stage "REV" and this lights up.
     """
@@ -360,7 +361,7 @@ def num(n):
 # (works when the image 404s and in a text browser).
 #
 # The colour is OURS, not the party's. Six real party colours cannot be a legal
-# categorical palette — two of these logos are green, two are red — so the
+# categorical palette. Two of these logos are green and two are red, so the
 # colours come from a validated ramp and the logo carries the party's own brand.
 # Where the two agree (JP verde, RP celeste->azul, FP naranja->latón) the slot
 # was chosen to agree.
@@ -368,7 +369,7 @@ def num(n):
 # Slots run in the order the palette was validated in, and the hemicycle seats
 # benches around the arc in that same order, so the only bench colours that ever
 # TOUCH are the adjacent pairs. That is not the same as the only pairs a reader
-# ever compares, which is all fifteen — see the measurement below, and
+# ever compares, which is all fifteen. See the measurement below, and
 # BENCH_SHAPE, which is the answer to it.
 #
 # The six are NOT a lightness ladder in slot order, and an earlier version of
@@ -378,15 +379,15 @@ def num(n):
 #     light  .087 .161 .255 .071 .277 .132
 #     dark   .164 .220 .287 .145 .315 .193
 #
-# — two rows demo() reads back out of this comment and recomputes, so they
+# Two rows demo() reads back out of this comment and recomputes, so they
 # cannot go stale again. In greyscale the weakest pair that actually touches on
 # the arc is 1.44:1 in light and 1.25:1 in dark. The previous ramp managed
 # 1.29:1 and 1.16:1 and its comment argued at length that ~1.13:1 was an
 # arithmetic ceiling in dark; it is not, and what was actually missing was
 # spread: letting the six sit at deliberately different lightnesses inside the
-# validator's band buys separation in every channel at once — greyscale, CVD
-# and normal vision — at the cost of the six not being equally salient, which
-# for six contiguous blocks on an arc is a cost worth paying.
+# validator's band buys separation in greyscale, in CVD and in normal vision
+# at once, at the cost of the six not being equally salient. For six contiguous
+# blocks on an arc that is a cost worth paying.
 #
 #   validate_palette.js "#016129,#4170B6,#B77F31,#63348E,#029FAB,#9C4A74"
 #        --mode light --surface "#FAFAF8"   -> ALL CHECKS PASS,
@@ -414,7 +415,7 @@ def num(n):
 # normal-vision floor of 15 by 0.9; dark clears neither. The previous ramp
 # scored 3.4 and 7.1 on that same test, and the validator's own reference ramp
 # scores 3.2, so this is a real improvement and still not a pass. demo() ports
-# the validator's arithmetic — Machado (2009) on linear RGB, ΔE in OKLab ×100 —
+# the validator's arithmetic, Machado (2009) on linear RGB and ΔE in OKLab ×100,
 # and recomputes those six numbers on every build, so this block cannot go back
 # to claiming a pass it never had.
 #
@@ -434,10 +435,17 @@ BENCH = {
 }
 BENCH_ORDER = sorted(BENCH, key=lambda p: BENCH[p][0])
 # Wikimedia Commons, licence checked file by file. Five are public domain as to
-# copyright and one — Juntos por el Perú — is CC BY-SA 4.0, which obliges us to
+# copyright and one, Juntos por el Perú, is CC BY-SA 4.0, which obliges us to
 # name the author and link the licence. The credit block lives here and every
 # page that shows a logo links to it.
 LOGO_CREDIT = "acerca.html#logos"
+
+# The one thing about the seating plan a reader could not work out alone: we
+# invented the order. It used to be printed under every arc on the site, six
+# figures deep; now it is the figure's own title and one line on /acerca, and
+# the seat itself says who sits in it when you point at it.
+CURULES = ("El orden dentro de la sala es el de este sitio: el Congreso no "
+           "publica el plano de curules.")
 
 
 def _logo_credits():
@@ -462,7 +470,7 @@ def bench_slot(party):
     return BENCH.get((party or "").strip(), (0,))[0]
 
 
-# One silhouette per bench, in slot order — the second channel the arc needs.
+# One silhouette per bench, in slot order. The arc needs a second channel.
 #
 # Measured, not asserted: six hues cannot be told apart on all fifteen pairs.
 # The palette validator, run with `--pairs all`, fails our ramp at ΔE 3.4
@@ -497,8 +505,8 @@ def bench_mono(party):
 
 
 def bench_logo(party, r="", size=26, cls=""):
-    """The bench's mark at a fixed square size. Two shapes arrive here — a
-    transparent PNG and a solid-background JPG — so both sit inside the same
+    """The bench's mark at a fixed square size. Two shapes arrive here, a
+    transparent PNG and a solid-background JPG, so both sit inside the same
     tile with `object-fit:contain` and neither one sets the row height.
 
     The monogram is not a fallback for a missing file, it is what renders when
@@ -518,28 +526,28 @@ def bench_logo(party, r="", size=26, cls=""):
 
 CSS = """
 /* LA PALETA. El registro oficial, sobre papel bond, con luz fría.
-   Lo que había antes —crema #F7F4EF, titulares en Georgia y un rojo terracota—
+   Lo que había antes, crema #F7F4EF, titulares en Georgia y un rojo terracota,
    es el tríptico que cualquier generador produce para cualquier encargo, y se
    nombra a simple vista. Éste sale del material del asunto: el Diario de los
    Debates impreso en bond casi blanco, el rojo institucional del Estado
    peruano, y la piedra gris azulada del Palacio Legislativo. La escala neutra
-   es FRÍA de arriba abajo —tinta, texto secundario, filetes, superficies— y el
-   único calor de la página son dos acentos reservados: el rojo, que sólo
+   es FRÍA de arriba abajo: tinta, texto secundario, filetes, superficies. El
+   único calor de la página son dos acentos reservados, el rojo, que sólo
    aparece donde habla la institución o donde hay que actuar, y un dorado sobrio
    para lo que sigue en trámite. Dos temperaturas: eso es exactamente lo que le
    faltaba al crema, donde todo era el mismo marrón claro.
 
    Tres familias de color, separadas a propósito:
-   · shell    — ground/raised/sunk/ink/muted/off/line/accent/gold: la página.
-   · estado   — si/no/abst/blanco/aus/lic/pres, más ok/wait/dead/sen/vio para
-                las etapas del trámite: lo que una votación o una etapa
-                SIGNIFICA. Reservados: nunca se reutilizan como color de serie,
-                y nunca van solos — cada estado lleva además su palabra y su
-                figura. Además son texto de 13 px en las fichas, así que los
-                catorce miden 4.5:1 o más contra --ground Y contra --raised en
-                los dos temas; ese techo es lo que impide una escalera más
-                ancha, y es la razón por la que el intento anterior falló.
-   · bancada  — gp1..gp6: QUIÉN. Rampa categórica validada, ver BENCH.
+   · shell:   ground/raised/sunk/ink/muted/off/line/accent/gold. La página.
+   · estado:  si/no/abst/blanco/aus/lic/pres, más ok/wait/dead/sen/vio para
+              las etapas del trámite. Lo que una votación o una etapa
+              SIGNIFICA. Reservados: nunca se reutilizan como color de serie,
+              y nunca van solos. Cada estado lleva además su palabra y su
+              figura. Además son texto de 13 px en las fichas, así que los
+              catorce miden 4.5:1 o más contra --ground Y contra --raised en
+              los dos temas; ese techo es lo que impide una escalera más
+              ancha, y es la razón por la que el intento anterior falló.
+   · bancada: gp1..gp6, QUIÉN. Rampa categórica validada, ver BENCH.
    Todo valor se declara primero en el bloque raíz a secas, así que ningún
    color existe sólo dentro de una media query. */
 :root{
@@ -579,8 +587,8 @@ CSS = """
 }
 /* LA ESCALA TIPOGRÁFICA. Nueve pasos y ni uno más:
      11 · 12.5 · 13.5 · 16 · 17 · 20 · 24 · 30 · 40
-   Antes había diecisiete tamaños distintos en una sola ficha de parlamentario
-   —nueve de ellos entre 9.5 y 15 px— que no es una escala sino una dispersión:
+   Antes había diecisiete tamaños distintos en una sola ficha de parlamentario,
+   nueve de ellos entre 9.5 y 15 px. Eso no es una escala sino una dispersión:
    nada de lo que se repite tiene el mismo peso dos veces y el lector no puede
    aprender a leer la página. Los papeles son fijos: 11 el monoespaciado de
    etiqueta, 12.5 los pies de figura, 13.5 la interfaz densa, 16 el cuerpo y el
@@ -605,21 +613,21 @@ b,strong{font-weight:600}
 /* SIN SERIFA, EN NINGÚN SITIO. Los titulares iban en Georgia, que junto al
    fondo crema y al rojo terracota completaba el tríptico que delata a una
    página generada. Aquí el display es la misma grotesca del sistema apretada
-   de prosa (-.03em en el h1), y todo lo que es CIFRA o RÓTULO —los números
-   grandes, las iniciales de un retrato que falta, la marca del sitio— va en
-   monoespaciado. Ése es el idioma de un padrón, de un acta y de un
-   expediente, que es lo que este sitio es, y no el de una revista. */
+   de prosa (-.03em en el h1), y va en monoespaciado todo lo que es CIFRA o
+   RÓTULO: los números grandes, las iniciales de un retrato que falta, la marca
+   del sitio. Ése es el idioma de un padrón, de un acta y de un expediente, que
+   es lo que este sitio es, y no el de una revista. */
 h1,h2,h3{font-family:inherit;font-weight:600;text-wrap:balance;margin:0}
 h1{font-size:clamp(24px,4.2vw,40px);letter-spacing:-.03em;line-height:1.14}
 /* A 91-character all-caps official title set at 40px is four lines of shouting.
    Long headlines step down to the second level of the scale instead. At 27px it
-   was exactly the size of the stat value three blocks below it — two different
-   things at one size is not a hierarchy — so it sits a step lower and the stat
+   was exactly the size of the stat value three blocks below it. Two different
+   things at one size is not a hierarchy, so it sits a step lower and the stat
    value a step higher. */
 h1.long{font-size:clamp(20px,2.6vw,24px);line-height:1.26;letter-spacing:-.016em}
 /* h2 has to stay under h1.long's FLOOR, not under h1's ceiling: 82% of these
    pages have a long title, and a fixed 24px h2 was bigger than its own page
-   title at every width below 810px — no first level of hierarchy at all on a
+   title at every width below 810px. No first level of hierarchy at all on a
    phone. h1.long floors at 20px and h2 at 17px, and h2 only reaches 20px at
    1053px wide, where h1.long is already 24. */
 h2{font-size:clamp(17px,1.9vw,20px);margin:0 0 16px;padding-bottom:9px;
@@ -637,7 +645,7 @@ p{margin:0 0 12px;max-width:70ch}
 .sm{font-size:13.5px}
 /* LA NAVEGACIÓN, COMO ARQUITECTURA Y NO COMO BARRA.
    Ocho destinos plegaron a tres filas primero y a un scroller lateral después.
-   El scroller no mentía —el degradado decía que había más— pero a 375 px seis
+   El scroller no mentía, el degradado decía que había más, pero a 375 px seis
    de los ocho seguían fuera de pantalla y sólo se llegaba a ellos arrastrando,
    que no es un índice: es un cajón.
    El arreglo no es de estilo. Los ocho destinos responden a tres preguntas
@@ -661,7 +669,7 @@ nav.top{position:sticky;top:0;z-index:30;background:var(--raised);
    destinations at 375px: scrollWidth 776 in a 292px box, and the only cue that
    more existed was «Parlamentarios» being clipped mid-word by the Tema button.
    Two affordances, no JavaScript:
-   · the classic CSS scroll shadow — two `local` gradients painted in the page
+   · the classic CSS scroll shadow: two `local` gradients painted in the page
      colour that ride WITH the content and so uncover the two `scroll` shadows
      underneath only at the edge that still has something behind it. The fade
      appears on the right at rest, on both sides mid-scroll, on the left at the
@@ -776,7 +784,7 @@ a.bchip:hover{border-bottom-color:currentColor}
   border:1px solid var(--line);border-radius:4px;color:var(--muted);
   font:600 16px/1 ui-monospace,Menlo,monospace;letter-spacing:.04em;flex:none}
 /* La cara dentro de una fila: 26×32. Declarado DESPUÉS de .face/.noface a
-   propósito — con la misma especificidad gana la última, y así fue como las
+   propósito. Con la misma especificidad gana la última, y así fue como las
    clases de figura del hemiciclo perdieron una vez. */
 .fmini{width:26px;height:32px;border-radius:3px}
 .fmini>i,.noface.fmini{font-size:11px;letter-spacing:.02em}
@@ -798,11 +806,42 @@ a.pchip:hover .nm{color:var(--accent)}
 .roll li a.pchip,.sign a.pchip,td a.pchip,#t td a.pchip{display:inline-flex;
   padding:3px 12px 3px 4px;line-height:1.25;min-height:44px}
 /* --- hemiciclo ------------------------------------------------------------ */
-.hemi{display:block;width:100%;height:auto;max-width:660px;margin:0 auto;
-  overflow:visible}
+/* The box, not the <svg>, carries the width cap: the hover layer is positioned
+   against it and has to be exactly the same rectangle as the drawing. */
+.hemibox{position:relative;max-width:660px;margin:0 auto}
+.hemi{display:block;width:100%;height:auto;overflow:visible}
 .hemi a:hover .seat{stroke:var(--ink);stroke-width:3}
 .hemi .seat.me{stroke:var(--accent);stroke-width:4}
 .hemi a{border:0}
+/* LA TARJETA DEL ESCAÑO. Un escaño con el puntero encima dice quién lo ocupa,
+   con su cara y la marca de su bancada: es lo que antes ponía un párrafo
+   debajo del diagrama explicando cómo leerlo.
+   Sin JavaScript y sin <title>. Cada enlace cubre la caja entera para que la
+   tarjeta pueda salir siempre en el mismo sitio, el hueco del arco, con
+   tamaño en px y no en unidades del viewBox; el cuadradito <i> es la única
+   parte que recibe el puntero, así que 190 enlaces apilados no se tapan.
+   `display:none` no es sólo para esconderla: un <img loading="lazy"> dentro de
+   una caja sin caja de formato no se descarga, y por eso los 190 retratos no
+   se piden hasta que uno hace falta. */
+.seatlayer{position:absolute;inset:0;pointer-events:none}
+.seatlayer .sl{position:absolute;inset:0;border:0;pointer-events:none}
+.seatlayer .sl>i{position:absolute;transform:translate(-50%,-50%);
+  pointer-events:auto;border-radius:50%;cursor:pointer}
+.seatlayer .sl:hover>i{box-shadow:0 0 0 2px var(--ink)}
+.seatlayer .sl:hover,.seatlayer .sl:focus-visible{z-index:5}
+.pop{display:none;position:absolute;left:50%;top:56%;
+  transform:translate(-50%,-50%);width:250px;box-sizing:border-box;
+  gap:10px;align-items:center;padding:9px 12px 9px 9px;
+  background:var(--raised);border:1px solid var(--line);border-radius:6px;
+  box-shadow:0 6px 22px rgba(0,0,0,.22);text-align:left}
+.sl:hover .pop,.sl:focus-visible .pop,.sl:focus .pop{display:flex}
+.pop .popt{min-width:0;display:flex;flex-direction:column;gap:4px}
+.pop b{color:var(--ink);font:600 13.5px/1.2 system-ui,sans-serif;
+  overflow-wrap:anywhere}
+.pop .pb,.pop .pn{display:flex;align-items:center;gap:6px;color:var(--muted);
+  font:400 11px/1.3 system-ui,sans-serif;min-width:0}
+.pop .pb{overflow:hidden}
+.pop .pn{font-weight:600;color:var(--ink)}
 .hemi .cut{stroke:var(--muted);stroke-width:1.6;stroke-dasharray:7 6;opacity:.8}
 .hemi .glab{fill:var(--ink);font-family:ui-monospace,Menlo,monospace;font-weight:600;
   letter-spacing:.08em}
@@ -810,17 +849,17 @@ a.pchip:hover .nm{color:var(--accent)}
   font-weight:600;text-anchor:middle;letter-spacing:.1em;text-transform:uppercase}
 .hemi .holen{fill:var(--ink);font-weight:600;letter-spacing:-.01em;
   text-anchor:middle}
-/* On a phone a 10px seat cannot be a 44px tap target and never will be — 130
-   of them need 250 000 px² and the viewport gives 94 000. So below 720px the
+/* On a phone a 10px seat cannot be a 44px tap target and never will be. 130 of
+   them need 250 000 px² and the viewport gives 94 000. So below 720px the
    seats stop being controls at all and the arc is a picture.
    This conforms under WCAG 2.5.8 by the *Equivalent* exception, not by any
-   input-device rule — there is none; 2.5.8 applies to a mouse exactly as it
+   input-device rule. There is none; 2.5.8 applies to a mouse exactly as it
    applies to a finger. The exception holds because the roster further down the
    same page offers every one of the same links at 44px. If that roster ever
    stops being rendered, this rule stops being conformant with it. */
-@media(max-width:719px){.hemi a{pointer-events:none}}
+@media(max-width:719px){.hemi a{pointer-events:none}.seatlayer{display:none}}
 /* The legend swatch that decodes a seat is an SVG drawn by `swatch()`, which
-   calls the same SHAPE table the seat does — see the note there for why it is
+   calls the same SHAPE table the seat does. See the note there for why it is
    no longer a <span> with a shape class. */
 .hemifig{margin:0}
 .hemifig figcaption{color:var(--muted);font-size:13.5px;margin-top:10px;max-width:66ch}
@@ -829,7 +868,7 @@ a.pchip:hover .nm{color:var(--accent)}
 .hall{border:1px solid var(--line);border-radius:6px;background:var(--raised);
   padding:18px 18px 16px}
 .hall h3{margin:0 0 8px}
-.hall .hemi{max-width:520px;margin-top:6px}
+.hall .hemibox{max-width:520px;margin-top:6px}
 /* --- gráficos ------------------------------------------------------------- */
 .chart{display:block;width:100%;height:auto;font:12.5px/1 system-ui,sans-serif}
 .chart text{fill:var(--muted);font-variant-numeric:tabular-nums}
@@ -1035,8 +1074,8 @@ td.who2{padding:4px 12px}
 .who .nm{font-size:17px;font-weight:600;letter-spacing:-.012em;display:block}
 .roll{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px 10px}
 /* min-width:0 en el ítem flexible: sin esto «María de los Milagros Jackeline
-   Jauregui Martínez» no se encoge —el mínimo por defecto de un ítem flex es su
-   contenido— y sacaba la página 110 px a la derecha a 375. Con esto el nombre
+   Jauregui Martínez» no se encoge, porque el mínimo por defecto de un ítem flex
+   es su contenido, y sacaba la página 110 px a la derecha a 375. Con esto el nombre
    se corta con puntos suspensivos dentro de su ficha. */
 .roll>li{font-size:13.5px;min-width:0;max-width:100%}
 .roll li a{display:inline-block;padding:11px 0;min-height:44px}
@@ -1094,7 +1133,7 @@ p a,.lede a,.note a,figcaption a{display:inline-block;min-height:44px;line-heigh
 .gloss{border:1px solid var(--line);border-radius:2px;margin:0 0 14px;background:var(--raised)}
 .gloss summary{cursor:pointer;padding:12px 16px;min-height:44px;display:flex;
   align-items:center;font:600 13.5px/1.4 system-ui,sans-serif}
-.gloss dl{padding:0 16px 16px;margin:0}
+.gloss dl,.gloss>p{padding:0 16px 16px;margin:0}
 .gloss dd{font-size:13.5px;color:var(--muted)}
 .prov b{color:var(--ink)}
 .prov,.prov a{overflow-wrap:anywhere}   /* PDF filenames are 60 characters long */
@@ -1104,7 +1143,7 @@ code{overflow-wrap:anywhere}
 .pager a,.pager span{min-height:44px;min-width:44px;display:inline-flex;align-items:center;
   justify-content:center;padding:0 10px;border:1px solid var(--line);border-radius:2px;
   font:600 13.5px/1 ui-monospace,Menlo,monospace}
-/* White on the accent is 3.63:1 in dark mode — 13px text needs 4.5:1. The page
+/* White on the accent is 3.63:1 in dark mode, and 13px text needs 4.5:1. The page
    ground reads on both accents: 6.73:1 light, 5.22:1 dark. */
 .pager .on{background:var(--accent);color:var(--ground);border-color:var(--accent)}
 .pager .mut{border-color:transparent;font-weight:400}
@@ -1122,6 +1161,14 @@ code{overflow-wrap:anywhere}
 .ranked a:hover .lbl{color:var(--accent)}
 @media(min-width:640px){.ranked a{grid-template-columns:minmax(150px,1.1fr) 2fr 64px 96px}}
 .ranked .lbl{font-size:13.5px;line-height:1.3;grid-column:1/-1}
+/* La fila que nombra una bancada lleva su logotipo, no sólo su nombre: es la
+   misma marca que el escaño y la leyenda. Clase propia para no tocar las
+   listas de facetas, que son texto y nada más. */
+.ranked .bl{display:flex;align-items:center;gap:8px;min-width:0}
+/* El nombre se parte en dos líneas antes que recortarse: «Partido del Buen
+   Gobierno» y «Partido del Buen Gobierno» abreviados igual son la misma fila
+   dos veces, y la columna mide 150 px dentro de una tarjeta. */
+.ranked .bl>span{min-width:0;overflow-wrap:anywhere}
 @media(min-width:640px){.ranked .lbl{grid-column:auto}}
 .ranked .track{background:var(--sunk);border-radius:3px;height:14px;overflow:hidden;
   border:1px solid var(--line)}
@@ -1140,6 +1187,14 @@ code{overflow-wrap:anywhere}
 /* el padrón: la marca de bancada al lado del nombre, no solo texto gris */
 .feed li>.rowmark{float:left;margin:11px 10px 0 0}
 .feed .m{font:600 11px/1.6 ui-monospace,Menlo,monospace;color:var(--muted);letter-spacing:.06em}
+/* Las bancadas que sostuvieron una votación, al lado del resultado. El
+   logotipo se lee de un vistazo; el título en mayúsculas del acta, no. */
+.vbs{display:flex;flex-wrap:wrap;gap:6px 18px;padding:0 0 8px}
+.vb{display:inline-flex;align-items:center;gap:5px}
+.vb em{font:600 11px/1.6 ui-monospace,Menlo,monospace;font-style:normal;
+  letter-spacing:.06em;color:var(--muted)}
+.vb.vsi em{color:var(--si)}
+.vb.vno em{color:var(--no)}
 .note{border-left:3px solid var(--wait);padding:10px 0 10px 14px;color:var(--muted);
   font-size:13.5px;margin:14px 0}
 .grid.cards{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
@@ -1155,18 +1210,19 @@ code{overflow-wrap:anywhere}
   border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 @media(min-width:760px){.toc{columns:2;column-gap:30px}.toc li{break-inside:avoid}}
 /* --- listados largos: la fila con etapa, medida y agrupación ---------------
-   Las 311 páginas de listado son las más largas del sitio — comision/agraria
-   medía 50 963 px a 375, 63 pantallas — y no tenían ni un solo elemento
-   gráfico: 250 filas del mismo tamaño, del mismo peso y del mismo color, con
-   el título corriendo 136 caracteres por línea mientras el propio .lede del
-   sitio se corta en 66. Cada fila lleva ahora tres cosas: un riel del color de
+   Las 311 páginas de listado son las más largas del sitio: comision/agraria
+   medía 50 963 px a 375, 63 pantallas. No tenían ni un solo
+   elemento gráfico. 250 filas del mismo tamaño, del mismo peso y del mismo
+   color, con el título corriendo 136 caracteres por línea mientras el propio
+   .lede del sitio se corta en 66. Cada fila lleva ahora un riel del color de
    su etapa (el mismo color que esa etapa tiene en la barra de la portada), la
-   etapa escrita —el color nunca va solo— y un título con medida de lectura.
+   etapa escrita, porque el color nunca va solo, y un título con medida de
+   lectura.
    El estado que se repite en toda la página se dice una vez arriba y solo se
    imprime en las filas que se salen de él, que son las que hay que ver. */
 /* minmax(0,1fr), no 1fr: el mínimo de una pista `1fr` es su contenido mínimo,
-   y un `.chip` con `white-space:nowrap` y cuarenta caracteres —«Publicada en el
-   Diario Oficial El Peruano»— ensanchaba la pista 3 px por encima del ancho de
+   y un `.chip` con `white-space:nowrap` y cuarenta caracteres, «Publicada en el
+   Diario Oficial El Peruano», ensanchaba la pista 3 px por encima del ancho de
    la página a 375. Los rótulos largos de estado además se parten. */
 .feed li.r{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px;
   align-items:start;padding:8px 0 10px 13px;border-left:3px solid currentColor}
@@ -1182,8 +1238,8 @@ code{overflow-wrap:anywhere}
 @media(min-width:520px){.feed li.r>.stg{grid-row:1/span 3}
   .feed li.r>.m,.feed li.r>.t,.feed li.r>.chip,.feed li.r>.sign{grid-column:2}
   /* nada que alinear si toda la página está en el mismo estado: la columna de
-     la etapa desaparece. Después de la regla de arriba a propósito — con la
-     misma especificidad, gana la última, y así fue como esta perdió una vez. */
+     la etapa desaparece. Después de la regla de arriba a propósito. Con la
+     misma especificidad gana la última, y así fue como esta perdió una vez. */
   .feed.nostg li.r{grid-template-columns:minmax(0,1fr)}
   .feed.nostg li.r>*{grid-column:1}}
 /* la cabecera de grupo: lo que convierte 250 filas en un documento navegable */
@@ -1284,17 +1340,24 @@ def logo_footer(body, r):
     CC BY-SA logo named neither its author nor its licence. Scoped by what the
     page shows and built from the same JSON as the credits table, so it cannot
     drift from the files or claim a licence for a logo that is not on screen.
+
+    Short on purpose. §3(a)(2) of CC BY-SA 4.0 lets the conditions be satisfied
+    by a link to a resource that carries the required information, and
+    /acerca#logos carries it in full: author, licence, source and the
+    rasterisation notice, per logo. So the footer names the author and the
+    licence, which is what has to be visible next to the work, and links the
+    rest instead of reprinting 60 words of it on 261 pages.
     """
     shown = [p for p in BENCH_ORDER if f"logos/{BENCH[p][2]}" in body]
     if not shown:
         return ""
     sa = [p for p in shown
           if "BY-SA" in LOGO_CREDITS.get(p, {}).get("licencia", "").upper()]
-    return ('<br>Logotipos de bancada, marcas de sus organizaciones, vía '
-            'Wikimedia Commons. '
-            + " ".join(f'El de {esc(p)}, {logo_credit_line(p)} a PNG de 320 px '
-                       f'de ancho: ésa es la única modificación.' for p in sa)
-            + f' <a href="{r}{LOGO_CREDIT}">Autoría y licencia de cada uno</a>.')
+    return ('<br>Logotipos: marcas de sus organizaciones. '
+            + " ".join(f'El de {esc(p)}, por {esc(LOGO_CREDITS[p]["autor"])}, '
+                       f'<a href="{CC_BY_SA}">CC BY-SA 4.0</a>.' for p in sa)
+            + f' <a href="{r}{LOGO_CREDIT}">Autoría, licencia y '
+              f'modificación de cada uno</a>.')
 
 
 def shell(title, body, depth=0, desc=""):
@@ -1311,10 +1374,9 @@ def shell(title, body, depth=0, desc=""):
 <style>{CSS}</style>{THEME}
 {nav_html(r)}
 <div class="wrap">{body}
-<footer class="prov"><a href="{r}acerca.html">Acerca de este sitio: quién lo
-hace, de dónde sale cada dato y cómo pedir una corrección</a> &middot;
-Registro independiente construido con datos publicados por el Congreso de la
-República del Perú. <b>Este sitio no es el Congreso.</b>{logo_footer(body, r)}
+<footer class="prov"><a href="{r}acerca.html">Acerca, fuentes y
+correcciones</a> &middot; Registro independiente con datos publicados por el
+Congreso del Perú. <b>Este sitio no es el Congreso.</b>{logo_footer(body, r)}
 </footer></div></html>"""
 
 
@@ -1386,6 +1448,7 @@ PHOTO_W = (160, 400)
 
 
 @functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=None)
 def local_photo(slug):
     """True when every width of this portrait is in the repo. Checked, not
     assumed: a slug that never downloaded gets the lettered tile rather than a
@@ -1415,7 +1478,7 @@ def avatar(L, w=48, h=60, cls="face", r=""):
     Never an empty <img src="">: that shipped once and rendered as a
     broken-image icon on 140 pages. The lettered tile also sits *behind* the
     photo, so a portrait the chamber deletes from under us degrades to the
-    initials instead of to a grey rectangle — no JavaScript involved."""
+    initials instead of to a grey rectangle, with no JavaScript involved."""
     box = f"width:{w}px;height:{h}px"
     ini = esc(initials(L["full_name"]) if L else "?")
     img = photo_img(L, r, w, h, f"{w}px")
@@ -1432,7 +1495,7 @@ def face_mini(L, r=""):
     un nombre dentro de una fila.
 
     Misma disciplina que avatar(): las iniciales van DETRÁS de la foto, así que
-    lo que se ve cuando no hay retrato —los 140 del Congreso anterior— es una
+    lo que se ve cuando no hay retrato, los 140 del Congreso anterior, es una
     baldosa con letras y nunca un <img src=""> roto."""
     ini = esc(initials(L["full_name"]) if L else "?")
     img = photo_img(L, r, 26, 32, "26px") if L else ""
@@ -1530,9 +1593,9 @@ SHAPE = {
             for a in range(-90, 270, 60)) + 'Z"'),
 }
 # vote state -> (shape, hollow). Hollow marks read as "not a vote": absent,
-# excused, chairing. Eight states, eight silhouettes — «sin voto registrado»
-# used to share the hollow ring with «ausente», and since both are drawn in the
-# same grey they were the same seat twice.
+# excused, chairing. Eight states, eight silhouettes. Before that, «sin voto
+# registrado» shared the hollow ring with «ausente», and since both are drawn in
+# the same grey they were the same seat twice.
 POS_SHAPE = {
     "SI": ("circle", 0), "NO": ("diamond", 0), "ABST": ("triangle", 0),
     "BLANCO": ("square", 0), "AUSENTE": ("ring", 1), "LICENCIA": ("square", 1),
@@ -1546,8 +1609,11 @@ def mark(shape, x, y, r, col, hollow=0, cls="", title="", href=""):
     fill = ("none" if hollow else col)
     stroke = (f'stroke="{col}" stroke-width="{max(r * .55, 1.6):.1f}"'
               if hollow else "")
+    # No <title> when there is no text for it: an empty one is a tooltip that
+    # opens blank, and the seats that carry a hover card pass title="" because
+    # the card says the same thing without a one-second delay.
     s = (f'{SHAPE[shape](x, y, r)} class="seat {cls}" fill="{fill}" {stroke}>'
-         f"<title>{esc(title)}</title>"
+         + (f"<title>{esc(title)}</title>" if title else "")
          + ("</circle>" if shape in ("circle", "ring") else
             "</rect>" if shape == "square" else "</path>"))
     # SHAPE already opens the tag; prepending another "<" emitted "<<circle"
@@ -1597,11 +1663,25 @@ def hemicycle(seats, r="", middle=None, sub="", ident="hemi", groups=None):
            f'role="group" aria-roledescription="diagrama de escaños" '
            f'aria-label="{esc(sub or "Distribución de escaños")}">'
            f'<title>{esc(sub or "Distribución de escaños")}</title>']
-    for (x, y, sr), (col, label, href, shape) in zip(pts, seats):
+    lay = []
+    for (x, y, sr), s in zip(pts, seats):
+        col, label, href, shape = s[:4]
+        card = s[4] if len(s) > 4 else ""
         px, py, pr = cx + x * R, cy + y * R, max(sr * R, 5.0)
         sh = (shape if isinstance(shape, tuple) else (shape or "circle", 0))
         sh = tuple(sh) + ("",) * (3 - len(sh))
-        out.append(mark(sh[0], px, py, pr, col, sh[1], sh[2], label, href))
+        # A seat with a card hands its link and its name to the overlay below,
+        # so the page has one <a> per member and not two.
+        out.append(mark(sh[0], px, py, pr, col, sh[1], sh[2],
+                        "" if card and href else label,
+                        "" if card and href else href))
+        if card and href:
+            lay.append(
+                f'<a class="sl" href="{href}" tabindex="-1" '
+                f'aria-label="{esc(label)}">'
+                f'<i style="left:{100 * px / W:.2f}%;top:{100 * py / H:.2f}%;'
+                f'width:{200 * pr / W:.2f}%;height:{200 * pr / H:.2f}%"></i>'
+                f'{card}</a>')
     if groups:
         # Boundary rules sit on the mid-angle between the last seat of one bench
         # and the first of the next, drawn from just inside the arc to outside.
@@ -1636,7 +1716,33 @@ def hemicycle(seats, r="", middle=None, sub="", ident="hemi", groups=None):
                    f'<text class="hole" x="{cx:.0f}" y="{my + 26 * k:.0f}" '
                    f'font-size="{14 * k:.0f}">{esc(small)}</text>')
     out.append("</svg>")
-    return "".join(out)
+    # The hover layer rides on top of the arc, in HTML and not in the SVG, for
+    # one reason: inside the viewBox a card is stuck with the SVG's own scale,
+    # and the two halls on the portada render about 490 px wide, which puts a
+    # 330-unit card at 126 px on screen. Out here it is 250 px at every width,
+    # it obeys z-index, and its <img>s are `loading="lazy"` inside a
+    # display:none box, so 190 portraits are not fetched to sit unseen.
+    if lay:
+        out.append(f'<div class="seatlayer">{"".join(lay)}</div>')
+    return f'<div class="hemibox">{"".join(out)}</div>'
+
+
+def seat_card(L, r="", note=""):
+    """What a seat says when you point at it: the face, the name, the bench
+    mark. Everything else the diagram used to explain in a caption under it.
+
+    Built from `avatar()` and `bench_logo()`, the same two components every
+    other row on this site uses, so a member looks the same in a hover card as
+    in the roster. Empty for a seat with nobody joined to it: a card with no
+    name is worse than the tooltip it replaced."""
+    if not L:
+        return ""
+    return ('<span class="pop">' + avatar(L, 46, 58, "face", r)
+            + f'<span class="popt"><b>{esc(nice_name(L["full_name"]))}</b>'
+            + f'<span class="pb">{bench_logo(L["party"], r, 20)}'
+            + f'{esc(L["party"] or "Sin grupo")}</span>'
+            + (f'<span class="pn">{esc(note)}</span>' if note else "")
+            + "</span></span>")
 
 
 def bench_seats(legs, r="", colour=lambda L: f"var(--gp{bench_slot(L['party'])})",
@@ -1645,14 +1751,15 @@ def bench_seats(legs, r="", colour=lambda L: f"var(--gp{bench_slot(L['party'])})
     each bench drawn in its own colour AND its own silhouette. Within a bench,
     alphabetical. Returns (seats, groups).
 
-    `cls` is the seat's shape; a caller that is answering a different question
-    — the bench page asks "which of these seats are ours" — overrides it."""
+    `cls` is the seat's shape; a caller answering a different question overrides
+    it. The bench page asks "which of these seats are ours"."""
     key = lambda L: (bench_slot(L["party"]) or 99, L["full_name"])  # noqa: E731
     ordered = sorted(legs, key=key)
     seats = [(colour(L),
-              f'{nice_name(L["full_name"])} — {L["party"] or "sin grupo"}'
+              f'{nice_name(L["full_name"])}, {L["party"] or "sin grupo"}'
               f'{" · " + L["district"] if L["district"] else ""}',
-              leg_url(r, L["slug"]) if link else "", cls(L))
+              leg_url(r, L["slug"]) if link else "", cls(L),
+              seat_card(L, r) if link else "")
              for L in ordered]
     groups, last = [], object()
     for L in ordered:
@@ -1679,8 +1786,8 @@ def swatch(col, shape=None, label=""):
     Drawn by `mark()`, the same function that draws the seat it decodes, so the
     key cannot disagree with the picture. It is an SVG and not a styled <span>
     for two measured reasons. The <span> version put each silhouette in a
-    `.key .sw-circle` rule and the generic `.key .sw` rule below it — identical
-    specificity, so the later one won — painted every one of them back into a
+    `.key .sw-circle` rule and the generic `.key .sw` rule below it. Identical
+    specificity, so the later one won and painted every one of them back into a
     rounded square: the key separated the states by colour alone while the seat
     plan separated them by shape. And a hollow triangle, which is what presiding
     the session looks like on the arc, has no CSS shorthand at all.
@@ -1705,7 +1812,7 @@ def key_list(items, shapes=None):
 
     The swatch wears the colour; the words never do. Coloured 13px text is the
     quiet way a chart fails contrast, and a legend whose label is only legible
-    to someone who can see the hue is not a legend — which is also why every
+    to someone who can see the hue is not a legend. That is also why every
     legend that decodes a seat plan or a state bar passes `shapes`.
     """
     out = []
@@ -1719,7 +1826,7 @@ def key_list(items, shapes=None):
 
 
 def pctxt(n, tot):
-    """A share as text. 51 of 14 908 is not «0%» — it is «menos del 1 %», and
+    """A share as text. 51 of 14 908 is not «0%». It is «menos del 1 %», and
     saying 0 next to a legend entry that is visibly drawn is a contradiction."""
     if not tot:
         return "—"
@@ -1731,7 +1838,7 @@ def pctxt(n, tot):
 # -------------------------------------------------------------------- charts
 #
 # Server-rendered SVG, no library and no runtime. Numbers are tabular, the axis
-# is recessive, and every chart carries a caption saying what it measures — a
+# is recessive, and every chart carries a caption saying what it measures. A
 # chart nobody can name the units of is decoration.
 
 def col_chart(rows, unit="", height=150, ident="c", bar_col="var(--accent)",
@@ -1739,8 +1846,8 @@ def col_chart(rows, unit="", height=150, ident="c", bar_col="var(--accent)",
     """Columns over time. `rows` is [(tick, title, value)] already in order.
 
     `tick` is what goes on the axis (blank for most of them); `title` is what
-    the hover says and is never blank — a tooltip reading «: 106 proyectos»
-    with no period on it is worse than no tooltip. `partial` marks the last
+    the hover says and is never blank. A tooltip reading «: 106 proyectos» with
+    no period on it is worse than no tooltip. `partial` marks the last
     column as an incomplete period so an 11-day month is not read as a crash.
     """
     if not rows:
@@ -1761,7 +1868,7 @@ def col_chart(rows, unit="", height=150, ident="c", bar_col="var(--accent)",
                     + (f' stroke="{bar_col}" stroke-width="2" '
                        f'stroke-dasharray="3 2"' if last else "")
                     + f'><title>{esc(ttl)}: {num(v)} {esc(unit)}'
-                    + (f" — {esc(partial)}" if last else "")
+                    + (f". {esc(partial)}" if last else "")
                     + "</title></rect>")
         if i % every == 0 or i == n - 1:
             labs.append(f'<text x="{x + bw / 2:.1f}" y="{height - 6}" '
@@ -1800,7 +1907,7 @@ def stack_bar(parts, total=None, height=15, gap=True):
 
 
 def bench_split(rows, party_of, r="", note=""):
-    """«Who is in this room, by bench» — the same block on a chamber page, a
+    """«Who is in this room, by bench». The same block serves a chamber page, a
     committee and a bench page. Bar + a legend that names every bench."""
     c = {}
     for x in rows:
@@ -1811,9 +1918,9 @@ def bench_split(rows, party_of, r="", note=""):
     tot = sum(c.values())
     bar = stack_bar([(f"var(--gp{bench_slot(p)})", p, c[p]) for p in order], tot)
     # The swatch is the seat: same `mark()`, same silhouette, same colour. It
-    # used to be a `<span class="sw">` square standing in for a round seat —
-    # the one place where "the key is drawn by mark() so it cannot drift" was
-    # still a claim rather than a fact.
+    # used to be a `<span class="sw">` square standing in for a round seat, the
+    # one place where "the key is drawn by mark() so it cannot drift" was still
+    # a claim rather than a fact.
     leg = ('<ul class="key">' + "".join(
         f'<li>{swatch(f"var(--gp{bench_slot(p)})", bench_shape(p), p)}'
         f'{bench_logo(p, r, 24)}<a href="{bench_url(r, p)}">{esc(p)}</a>'
@@ -1836,7 +1943,7 @@ BILLREF = re.compile(r"(?:proyecto|pl|proposici[oó]n)[^0-9]{0,20}(\d{1,5})\s*[/
 def subject_bill(d, v):
     """`vote.bill_id` is null on every roll call the Congress has published, so
     the only link left is the bill number written inside the asunto. Matches
-    only an explicit `NNNN/YYYY` style reference — no fuzzy title matching,
+    only an explicit `NNNN/YYYY` style reference, never a fuzzy title match,
     because a wrong bill on a vote page is worse than no bill."""
     m = BILLREF.search(v["subject"] or "")
     if not m:
@@ -1862,8 +1969,8 @@ def ctte_key(name):
 
 def ctte_aliases(con, cttes):
     """Five ids in `committee` are not committees. They were created from oficio
-    amendment blocks that name an existing body with a longer title —
-    «Comisión de Procedimientos Especiales» for «Procedimientos Especiales» —
+    amendment blocks that name an existing body with a longer title,
+    «Comisión de Procedimientos Especiales» for «Procedimientos Especiales»,
     and they inflated the Senate list from 11 to 16 while making a member's
     «cambios posteriores» point at a committee they are already sitting on.
 
@@ -1872,7 +1979,7 @@ def ctte_aliases(con, cttes):
     the same chamber and periodo by title similarity. Nothing is written to the
     DB; the ids stay there and this runs again on the next build.
 
-    ponytail: SequenceMatcher over a normalised title, cutoff 0.6 — the worst
+    ponytail: SequenceMatcher over a normalised title, cutoff 0.6. The worst
     real pair here scores 0.67 and the best wrong one 0.4. If the Congress ever
     files two committees whose names differ by one word, this needs the oficio's
     own text instead of the title.
@@ -2134,8 +2241,8 @@ def load(con):
 # ------------------------------------------------------------- text of a bill
 
 # The filed document, as `pdftotext -layout` left it. Peruvian bills are
-# structured — articles, disposiciones, exposición de motivos, fórmula legal —
-# and that structure survives in the plain text as line prefixes. Detecting it is
+# structured into articles, disposiciones, exposición de motivos y fórmula
+# legal, and that structure survives in the plain text as line prefixes. Detecting it is
 # the difference between a readable law and GovTrack's 594-page dump with no
 # table of contents and hashed anchors.
 ORD = ("[úu]nico|primero|segundo|tercero|cuarto|quinto|sexto|s[ée]ptimo|octavo|"
@@ -2238,17 +2345,13 @@ if(m){q.value=decodeURIComponent(m[1]);f();}})()
 # table of contents and the ficha, and stays readable on a phone.
 SPLIT = 60000
 
-TEXT_SRC = ("Texto extraído del PDF que el propio Congreso publica en el "
-            "expediente, con <code>pdftotext -layout</code>. No hay una versión "
-            "en HTML ni en datos: el original es el PDF enlazado arriba, y ante "
-            "cualquier diferencia manda el original.")
+TEXT_SRC = ("Extraído con <code>pdftotext -layout</code> del PDF del expediente. "
+            "Ante cualquier diferencia manda el original.")
 
-ONE_VERSION = ("Es el texto <b>tal como fue presentado</b>. El Congreso no "
-               "publica versiones sucesivas del articulado como documentos "
-               "comparables: lo que viene después —dictamen, texto sustitutorio, "
-               "autógrafa— aparece como PDF suelto en el historial del "
-               "expediente. Por eso aquí hay una sola versión y no una "
-               "comparación entre versiones.")
+ONE_VERSION = ('<span title="El dictamen, el texto sustitutorio y la autógrafa '
+               'aparecen como PDF sueltos en el historial del expediente.">Es el '
+               'texto <b>tal como fue presentado</b>. El Congreso no publica '
+               'versiones comparables del articulado.</span>')
 
 
 def text_corpus(d):
@@ -2282,7 +2385,7 @@ def bill_text_html(d, b, r):
 
     Three states, and they are not the same thing: text we have, a document the
     Congress filed as an image, and a bill whose PDF we simply have not fetched
-    yet. The third renders nothing at all — claiming a bill has no text when it
+    yet. The third renders nothing at all. Claiming a bill has no text when it
     is our pipeline that is behind would be a lie about the Congress.
     """
     t = d["texts"].get(b["id"])
@@ -2298,17 +2401,13 @@ def bill_text_html(d, b, r):
                "El Congreso publicó este proyecto como imagen escaneada, sin "
                "texto seleccionable.")
         return (f'<section id="texto"><h2>Texto del proyecto</h2>'
-                f'<p>{why} Algunos proyectos se presentan como fotografías del '
-                f'documento firmado, de modo que no hay nada que extraer: no '
-                f'podemos ofrecerlo aquí como HTML ni buscar dentro de él. '
-                f'{pdf}'
-                + (f' — {num(t["pages"])} página'
+                f'<p>{why} El PDF se lee a la vista, pero no tiene capa de texto: '
+                f'no hay nada que extraer ni buscar. {pdf}'
+                + (f', {num(t["pages"])} página'
                    f'{"s" if t["pages"] != 1 else ""} de imágenes'
                    if t["pages"] else "")
-                + f'.</p><p class="sm mut">Razón registrada por nuestra ingesta: '
-                f'<code>{esc(t["note"])}</code>. El PDF oficial sigue publicado '
-                f'y es legible a la vista; lo que no tiene es capa de texto, de '
-                f'modo que no hay nada que extraer ni indexar.</p></section>'), None
+                + f'.</p><p class="sm mut">Razón registrada por la ingesta: '
+                f'<code>{esc(t["note"])}</code>.</p></section>'), None
     body = text_body(d, b["id"])
     if not body:
         return "", None      # row says there is a body and there is not: say nothing
@@ -2319,9 +2418,8 @@ def bill_text_html(d, b, r):
     toc_html = (f'<h3 style="margin-top:22px">Índice del articulado '
                 f'({len(toc)})</h3><ol class="toc">{"".join(toc)}</ol>'
                 if toc else
-                '<p class="sm mut">Este documento no trae artículos numerados '
-                'ni secciones con título, así que no hay índice que construir: '
-                'es texto corrido.</p>')
+                '<p class="sm mut">Texto corrido: no trae artículos numerados '
+                'ni secciones con título, así que no hay índice.</p>')
     head = (f'<p>{text_stats(t)}. {pdf}. {ONE_VERSION}</p>')
     search = ('<div class="filters" style="margin-top:18px">'
               '<input id="q" type="search" placeholder="Buscar dentro del texto"'
@@ -2333,9 +2431,8 @@ def bill_text_html(d, b, r):
                f'<p class="sm mut">{TEXT_SRC}</p></section>{TEXT_JS}')
         return sec, None
     sec = (f'<section id="texto"><h2>Texto del proyecto</h2>{head}'
-           f'<p><a href="{page}">Leer el texto completo en esta web</a>, con '
-           f'buscador dentro del documento. Es largo, así que va en su propia '
-           f'página; cada entrada del índice entra directo a su artículo.</p>'
+           f'<p>Es largo, así que va en <a href="{page}">su propia página</a>, con '
+           f'buscador.</p>'
            f'{toc_html}<p class="sm mut">{TEXT_SRC}</p></section>')
     ch = b["chamber"] or "C"
     ttl = b["title"] or "Sin título registrado"
@@ -2345,8 +2442,7 @@ def bill_text_html(d, b, r):
 <span class="eyebrow">Texto del proyecto {esc(b["code"])}</span>
 <h1>{esc(clip(ttl, 150))}</h1>
 <p class="lede">{text_stats(t)}. {pdf + "." if pdf else ""}
-<a href="{b["ply_num"]}.html">Volver a la ficha del proyecto</a>, con su estado,
-su trámite, quién lo firmó y el historial completo del expediente.</p>
+<a href="{b["ply_num"]}.html">Volver a la ficha del proyecto</a>.</p>
 <p class="sm mut">{ONE_VERSION}</p>
 {toc_html}
 {search}
@@ -2382,6 +2478,35 @@ def stage_badge(b):
     return f'<span class="stg">{esc(tag)}</span>'
 
 
+def vote_feed_row(d, v, r=""):
+    """One roll call in a list.
+
+    The bench marks are the reason this function exists. Five all-caps titles
+    stacked on a date is a wall of text you skip; the same five with the logos
+    of the benches that carried each one can be read without reading. `vbloc`
+    is the bench's own majority in that roll call, computed once in `load()`,
+    so a list can never disagree with the breakdown on the vote page itself.
+    """
+    def side(ps, txt, cls):
+        if not ps:
+            return ""
+        return (f'<span class="vb {cls}" title="{esc(txt)}: '
+                f'{esc(", ".join(ps))}">'
+                + "".join(bench_logo(p, r, 20) for p in ps)
+                + f"<em>{esc(txt)}</em></span>")
+
+    si = [p for p in BENCH_ORDER if d["vbloc"].get((v["id"], p)) == "SI"]
+    no = [p for p in BENCH_ORDER if d["vbloc"].get((v["id"], p)) == "NO"]
+    marks = side(si, "a favor", "vsi") + side(no, "en contra", "vno")
+    if not marks and not d["vrows"].get(v["id"]):
+        marks = '<span class="vb"><em>sin lista nominal</em></span>'
+    tail = f'<span class="vbs">{marks}</span>' if marks else ""
+    return (f'<li><span class="m">{esc(CHAMBER_SHORT[v["chamber"]])} · '
+            f'{fecha(v["held_on"])} · {esc(v["result"] or "")}</span>'
+            f'<a class="t" href="{r}votacion/{v["slug"]}.html">'
+            f'{esc(clip(v["subject"] or v["id"], 150))}</a>{tail}</li>')
+
+
 def status_chip(b):
     """The published state, as a chip."""
     stage = status_info(b["status"])[0]
@@ -2402,7 +2527,7 @@ def repeated(b):
 def bill_row(r, b, extra=""):
     """One bill in a list: a rail in the colour of its stage, the stage in
     words, the code and date, the title at reading measure, and the published
-    state. Three channels for the stage — position, colour, word — because a
+    state. The stage arrives on three channels: position, colour and word. A
     list of 150 rows is scanned, not read."""
     _tag, tone = STAGE_TAG.get(status_info(b["status"])[0], STAGE_TAG["PRES"])
     t = b.get("text")
@@ -2416,7 +2541,7 @@ def bill_row(r, b, extra=""):
 
 
 # Mociones, by what the instrument actually is. The register publishes nine
-# spellings of five things, and 87 of the 107 are greetings — a fact the page
+# spellings of five things, and 87 of the 107 are greetings, a fact the page
 # hid completely by printing them in arrival order with an identical chip.
 MOC_FAMILY = {"inv": ("Investigación", "st-pleno"),
               "control": ("Control político", "st-autog"),
@@ -2466,8 +2591,8 @@ def stage_mix(bills, r=""):
     order = [k for k in ("PRES", "COM", "PLENO", "REV", "AUTOG", "LEY", "DEAD")
              if c.get(k)]
     if len(order) < 2:
-        # A facet that IS one state — «Proyectos en estado PUBLICADA EN EL
-        # DIARIO OFICIAL EL PERUANO» — has nothing to split. Its shape over
+        # A facet that IS one state, «Proyectos en estado PUBLICADA EN EL
+        # DIARIO OFICIAL EL PERUANO», has nothing to split. Its shape over
         # time is the fact it does have, and it is the same axis the month
         # headings below are cut on.
         ds = [b["presented_on"][:10] for b in bills if b["presented_on"]]
@@ -2486,10 +2611,9 @@ def stage_mix(bills, r=""):
                 return ('<figure style="margin:18px 0 0">'
                         + col_chart(pts, "proyectos", 130, "mix", "var(--wait)",
                                     every=max(1, len(ks) // 12))
-                        + f'<figcaption>Cuántos de estos proyectos entraron cada '
-                          f'{unit}. Todos están en el mismo estado, así que lo '
-                          f'que los distingue es cuándo llegaron; abajo la lista '
-                          f'va agrupada por mes.</figcaption></figure>')
+                        + f'<figcaption>Cuántos entraron cada {unit}. Están todos '
+                          f'en el mismo estado, así que lo que los distingue es '
+                          f'cuándo llegaron.</figcaption></figure>')
         return ""
     tot = sum(c.values())
     return ('<figure style="margin:18px 0 0">'
@@ -2497,13 +2621,12 @@ def stage_mix(bills, r=""):
                         tot, height=18)
             + key_list([(STAGE_COL[k], esc(STAGE_TAG[k][0]),
                          f"{num(c[k])} · {pctxt(c[k], tot)}") for k in order])
-            + '<figcaption>En qué etapa del trámite están los proyectos de este '
-              'listado. Cada fila de abajo lleva el mismo color en su riel '
-              'izquierdo.</figcaption></figure>')
+            + '<figcaption>En qué etapa están los proyectos de este listado; cada '
+              'fila lleva ese color en su riel.</figcaption></figure>')
 
 
 def bill_feed(r, bills):
-    """Rows for `paginate`: (mes, chip, <li>) — the month groups the list and
+    """Rows for `paginate`: (mes, chip, <li>). The month groups the list and
     the chip is handed over separately so the page can hoist it if it turns out
     to say the same thing on most of its rows."""
     return [(mes_de(b["presented_on"]), repeated(b), bill_row(r, b))
@@ -2602,11 +2725,9 @@ def render_bill(d, b):
         # We know our copy has no timeline rows. We do NOT know whether the
         # Congress published none or we simply have not fetched them, and the
         # page must not assert the second.
-        tl_note = ('<div class="note">Nuestra copia no tiene movimientos '
-                   'registrados para este expediente: solo la fecha de '
-                   'presentación y el estado vigente, ambos del listado oficial. '
-                   'El expediente completo, enlazado al pie, es la fuente '
-                   'autoritativa y puede contener más.</div>')
+        tl_note = ('<div class="note">Nuestra copia no tiene movimientos de este '
+                   'expediente: solo su fecha de presentación y su estado. El '
+                   'expediente oficial, al pie, puede contener más.</div>')
 
     # sponsors
     named = [s for s in sponsors if s["leg"]]
@@ -2635,9 +2756,8 @@ def render_bill(d, b):
             spon_html = (
                 f'<div class="who"><div><span class="nm">'
                 f'{esc(nice_name(primary["name_raw"]))}</span>'
-                f'<div class="sm mut">Autor principal. No figura en el padrón '
-                f'2026-2031, así que no tenemos su ficha: los proyectos del '
-                f'periodo 2021-2026 fueron firmados por otro Congreso.</div>'
+                f'<div class="sm mut">No figura en el padrón 2026-2031, así que '
+                f'no tenemos su ficha.</div>'
                 f'</div></div>')
     co = [s for s in sponsors if s is not primary]
     co_html = ""
@@ -2666,9 +2786,8 @@ def render_bill(d, b):
             head = ('<figure style="margin:0 0 20px">'
                     + bench_split([L["party"] for L in withb], lambda p: p, r)
                     + f'<figcaption>{len(named)} de {len(sponsors)} firmantes '
-                      f'están identificados en el padrón; el reparto es sobre '
-                      f'los {len(withb)} de ellos que tienen bancada registrada.'
-                      f'</figcaption></figure>')
+                      f'cruzan con el padrón; el reparto va sobre los {len(withb)} '
+                      f'con bancada registrada.</figcaption></figure>')
         co_html = (f'<section><h2>Coautores ({len(co)})</h2>{head}'
                    f'<ul class="roll signers">{"".join(items)}</ul></section>')
 
@@ -2686,10 +2805,8 @@ def render_bill(d, b):
                 + bench_split(tits, lambda m: m["bench"] or (m["leg"] or {}).get("party"), r)
                 + f'<figcaption>Las {len(tits)} plazas de titular '
                 + (f'de {ct_links}' if one else f'de las {len(cts)} comisiones que lo tienen')
-                + ', repartidas por bancada. Un dictamen sale con la mayoría de '
-                  'esas plazas, de modo que este reparto es la aritmética real '
-                  'del expediente. Fuente: el Diario de los Debates del Senado, '
-                  'la única publicación que trae los cuadros.'
+                + ', por bancada: un dictamen sale con la mayoría de ellas. '
+                  'Fuente: Diario de los Debates del Senado.'
                   '</figcaption></figure></section>')
 
     votes = d["bill_votes"].get(bid, [])
@@ -2711,9 +2828,7 @@ def render_bill(d, b):
             f'({len(votes)})</h2><div class="scroll"><table><thead><tr>'
             f'<th>Fecha</th><th>Asunto</th><th>A favor</th><th>En contra</th>'
             f'<th>Abst.</th><th>Resultado</th></tr></thead><tbody>'
-            + "".join(vr) + '</tbody></table></div>'
-            '<p class="sm mut">Cada votación enlaza al detalle por bancada y a '
-            'la lista completa de cómo votó cada parlamentario.</p></section>')
+            + "".join(vr) + '</tbody></table></div></section>')
 
     # ponytail: the timeline already links every document at its own stage, so
     # a second flat list of the same 20 rows is noise. Only the count and the
@@ -2736,15 +2851,12 @@ def render_bill(d, b):
     if docs:
         docs_html = (
             f"<section><h2>Documentos del expediente ({len(docs)})</h2>"
-            f"<p class='sm mut'>Cada documento está enlazado arriba, en la etapa "
-            f"del trámite que lo produjo: así se ve de qué fase sale cada PDF. "
-            + ("El Congreso los publica solo como PDF en sus propios servidores; "
-               "el texto del proyecto tal como fue presentado está leído de ese "
-               "PDF y se puede <a href=\"#texto\">leer aquí, por artículos</a>."
+            f"<p class='sm mut'>Cada uno está enlazado arriba, en la etapa que lo "
+            f"produjo. "
+            + ("El Congreso solo los publica en PDF; "
+               "<a href=\"#texto\">el texto, por artículos, está aquí</a>."
                if text_sec and b["text"]["has_body"] else
-               "El Congreso no publica el texto de los proyectos en HTML, solo "
-               "estos PDF en sus propios servidores, de modo que no podemos "
-               "ofrecer el texto en esta página ni compararlo entre versiones.")
+               "El Congreso solo los publica en PDF, nunca en HTML.")
             + "</p></section>")
 
     e1, e2 = _enc(b["per_par"]), _enc(b["ply_num"])
@@ -2791,7 +2903,7 @@ def render_bill(d, b):
 {ficha_texto}
 {f'<div><dt>{"Comisión dictaminadora" if len(cts) == 1 else "Comisiones"}</dt><dd>{ct_links}</dd></div>' if cts else ""}
 </dl>
-{f'<dl class="kv" style="margin-top:12px;grid-template-columns:1fr"><div><dt>Título oficial completo</dt><dd>{esc(full)}</dd></div></dl>' if head != full else ""}
+{f'<details class="gloss" style="margin-top:12px"><summary>Título oficial completo</summary><p>{esc(full)}</p></details>' if head != full else ""}
 </section>
 {"<section><h2>Autor principal</h2>" + spon_html + "</section>" if spon_html else ""}
 {co_html}
@@ -2805,9 +2917,8 @@ def render_bill(d, b):
     f'<code>{API}/proyecto-ley</code>.',
     f'Expediente oficial: <a href="{esc(off)}">portal SPLey del Congreso ↗</a>.',
     f'Descargado el {fecha(b["fetched_at"])}' if b["fetched_at"] else "",
-    'El Congreso actualiza el estado de un expediente el mismo día en que se '
-    'registra el movimiento; esta copia se regenera cuando corre la ingesta, '
-    'de modo que el retraso máximo es de una corrida.',
+    'Esta copia se regenera en cada corrida de la ingesta: el retraso máximo '
+    'frente al registro oficial es de una corrida.',
     f'Cita sugerida: «Proyecto de ley {esc(b["code"])}, Congreso de la '
     f'República del Perú, consultado el {fecha(dt.date.today().isoformat())}».',
 ])}
@@ -2849,8 +2960,8 @@ def att_strip(d, L, r="../"):
     Thirteen takings is not a year, so this is a strip of the sessions that
     happened and not a month grid: a calendar of empty squares would claim we
     know something about the days in between. Every cell carries its letter as
-    well as its colour — red and green alone fail one man in twelve — and links
-    to the session it comes from.
+    well as its colour, because red and green alone fail one man in twelve, and
+    links to the session it comes from.
 
     `att_state` decides what each cell is, and nothing here second-guesses it:
     a licencia and the chair get their own state, never the absent one.
@@ -2872,7 +2983,7 @@ def att_strip(d, L, r="../"):
             cs.append(
                 f'<a class="cell" style="color:{col}" '
                 f'href="{r}asistencia/{esc(s["slug"])}.html" '
-                f'title="{fecha(s["held_on"])}, {esc(s["taken_at"])} — {esc(lab)}">'
+                f'title="{fecha(s["held_on"])}, {esc(s["taken_at"])}: {esc(lab)}">'
                 f'<b>{ch}</b><span>{int(s["held_on"][8:])}</span></a>')
         cells.append(f'<div class="mo"><span class="mol">{MES[int(m) - 1]} {y} '
                      f'<b>{len(months[mk])}</b></span>'
@@ -2884,10 +2995,8 @@ def att_strip(d, L, r="../"):
                     for k in seen],
                    shapes=[ATT_CELL[k][3] for k in seen])
     return (f'<figure><div class="cal">{"".join(cells)}</div>{leg}'
-            f'<figcaption>Una casilla por toma de asistencia, en el orden en que '
-            f'se tomaron; solo aparecen los meses con sesión, con cuántas tuvo. '
-            f'El número es el día. Cada casilla lleva su letra además de su '
-            f'color y enlaza a la lista de esa sesión.</figcaption></figure>')
+            f'<figcaption>Una casilla por toma, en orden; el número es el día. '
+            f'Solo aparecen los meses con sesión.</figcaption></figure>')
 
 
 def peer_strips(d, L, base, r="../"):
@@ -2925,11 +3034,11 @@ def peer_strips(d, L, base, r="../"):
         ("Mociones firmadas", lambda P: len(d["leg_motions"].get(P["slug"], [])), "",
          "sobre las mociones publicadas hasta hoy"),
         ("Asistencia al Pleno", att_of, "%",
-         "sobre las tomas en que se le esperaba: la licencia y la presidencia "
-         "no entran en el denominador"),
+         "sobre las tomas en que se le esperaba; licencia y presidencia fuera "
+         "del denominador"),
         ("Votó con su bancada", loyal, "%",
-         "sobre las votaciones nominales en que emitió voto, frente a la "
-         "posición mayoritaria de su propio grupo"),
+         "sobre las votaciones en que emitió voto, frente a la mayoría de su "
+         "grupo"),
     ]
     out = []
     for title, fn, unit, den in axes:
@@ -2965,7 +3074,7 @@ def peer_strips(d, L, base, r="../"):
         same = hist[mine]
         rank = better + 1
         rank_txt = (f"{rank}.º" if same == 1 else
-                    f"{rank}.º–{rank + same - 1}.º, empatado con "
+                    f"{rank}.º a {rank + same - 1}.º, empatado con "
                     f"{same - 1} colega" + ("s" if same > 2 else ""))
         # The median label sits under the median line, and the two end labels
         # step out of its way rather than printing on top of it.
@@ -2988,17 +3097,15 @@ def peer_strips(d, L, base, r="../"):
 <text x="{max(14, min(W - 14, mx)):.1f}" y="57" font-size="11"
  text-anchor="{anch}">mediana {med}{esc(unit)}</text>
 </svg></div>
-<p class="sm mut">{esc(rank_txt)} de {len(vals)} en {esc(CHAMBER[ch])};
-{esc(den)}. Cada barra es un valor y su altura, cuánta gente lo comparte.</p>
+<p class="sm mut">{esc(rank_txt)} de {len(vals)} en {esc(CHAMBER[ch])}; {esc(den)}.</p>
 </figure>""")
     if not out:
         return ""
     return (f'<section><h2>Dónde está en su cámara</h2>'
-            f'<p class="sm mut">Cada raya es un integrante de '
-            f'{esc(CHAMBER[ch])}; el círculo es esta persona y la línea vertical, '
-            f'la mediana de la cámara. Son recuentos, no puntajes: no publicamos '
-            f'un eje ideológico porque no hay con qué calcularlo sin '
-            f'inventarlo.</p>' + "".join(out) + "</section>")
+            f'<p class="sm mut">El círculo es esta persona; la vertical, la mediana '
+            f'de {esc(CHAMBER[ch])}. Todo lo de aquí son recuentos. No publicamos un eje '
+            f'ideológico porque no hay con qué calcularlo sin inventarlo.</p>'
+            + "".join(out) + "</section>")
 
 
 def att_block(d, L, base, r="../"):
@@ -3009,11 +3116,10 @@ def att_block(d, L, base, r="../"):
     if not xs:
         if L["per_par"] < 2026:
             return ""       # no taking of that Congress is in our copy: omit
-        return ('<section><h2>Asistencia al Pleno</h2><p>No figura en ninguna '
-                'de las listas de asistencia que hemos leído. Las listas '
-                'nombran a los 130 diputados y 60 senadores en ejercicio, de '
-                'modo que esto significa que su nombre no cruzó con el padrón, '
-                'no que haya faltado.</p></section>')
+        return ('<section><h2>Asistencia al Pleno</h2><p>No figura en las listas '
+                'que hemos leído. Como nombran a los 190 en ejercicio, significa '
+                'que su nombre no cruzó con el padrón, no que haya '
+                'faltado.</p></section>')
     ok, den, lic, pre = leg_att_rate(d, L)
     rate, usable = pct_or_note(ok, den)
     peers = base["asist"].get(L["chamber"], [])
@@ -3042,20 +3148,19 @@ def att_block(d, L, base, r="../"):
     return f"""<section><h2>Asistencia al Pleno</h2>
 <dl class="tiles">
 <div class="tile"><dt>Asistió</dt><dd>{ok} de {den}<small>{esc(rate)}{cmp_txt}</small></dd></div>
-<div class="tile"><dt>Inasistencias</dt><dd>{faltas}<small>tomas de asistencia en las que
-no registró presencia ni licencia</small></dd></div>
-<div class="tile"><dt>Con licencia</dt><dd>{lic}<small>permiso de la Mesa Directiva: no es
-inasistencia y no entra en el denominador</small></dd></div>
-{f'<div class="tile"><dt>Presidiendo</dt><dd>{pre}<small>dirigía la sesión: tampoco es inasistencia</small></dd></div>' if pre else ""}
+<div class="tile"><dt>Inasistencias</dt><dd>{faltas}<small>tomas sin presencia ni
+licencia</small></dd></div>
+<div class="tile"><dt>Con licencia</dt><dd>{lic}<small>permiso de la Mesa Directiva:
+fuera del denominador</small></dd></div>
+{f'<div class="tile"><dt>Presidiendo</dt><dd>{pre}<small>dirigía la sesión: tampoco es falta</small></dd></div>' if pre else ""}
 </dl>
 <div style="margin-top:22px">{att_strip(d, L, r)}</div>
 <div class="scroll" style="margin-top:18px"><table><thead><tr><th>Sesión</th>
 <th>Hora de la toma</th><th>Estado</th><th>Qué significa</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
-<p class="sm mut">Cada sesión pasa lista más de una vez, así que la unidad es la
-toma de asistencia y no el día. {len(xs)} tomas registradas para
-{esc(CHAMBER[L["chamber"]])}; <a href="{r}asistencia.html">la lista completa,
-sesión por sesión</a>, con quién faltó en cada una.</p></section>"""
+<p class="sm mut">La unidad es la toma, no el día: cada sesión pasa lista varias
+veces. {len(xs)} tomas de {esc(CHAMBER[L["chamber"]])};
+<a href="{r}asistencia.html">todas, sesión por sesión</a>.</p></section>"""
 
 
 def render_leg(d, L, base):
@@ -3072,15 +3177,11 @@ def render_leg(d, L, base):
     else:
         # The 2021-2026 roster survives only as names in the bills API: no
         # party, no district, no photo. Say that instead of rendering blanks.
-        lede = (f'Integró {esc(EN[L["chamber"]])} en el periodo {per}. '
-                f'Esta ficha existe para que las firmas de aquel Congreso '
-                f'enlacen a una persona.')
-        thin = ('<div class="note">Ficha mínima. Del padrón 2021-2026 el '
-                'Congreso solo mantiene publicado el nombre en el filtro de '
-                'autores de la base de proyectos: bancada, circunscripción, '
-                'foto y contacto no sobrevivieron al cambio de periodo, y no '
-                'los inventamos. Lo que sí es completo es su rastro '
-                'legislativo, abajo.</div>')
+        lede = f'Integró {esc(EN[L["chamber"]])} en el periodo {per}.'
+        thin = ('<div class="note">Ficha mínima: del padrón 2021-2026 el Congreso '
+                'solo mantiene publicado el nombre. Bancada, circunscripción, foto '
+                'y contacto no sobrevivieron al cambio de periodo. Su rastro '
+                'legislativo, abajo, sí está completo.</div>')
     # 22 people sat in both Congresses and had two pages that never referenced
     # each other: their record read as two strangers with the same name.
     twin = ""
@@ -3090,11 +3191,9 @@ def render_leg(d, L, base):
             f'<div class="note">Es la misma persona que '
             f'<a href="{leg_url(r, o["slug"])}">'
             f'{esc(nice_name(o["full_name"]))}, {esc(CHAMBER[o["chamber"]])} '
-            f'{opar}</a>: volvió a ser elegida, de modo que su trayectoria '
-            f'está repartida en dos fichas, una por Congreso. Aquí verá lo que '
-            f'hizo en {esc(CHAMBER[L["chamber"]])} {per}; allí, lo del periodo '
-            f'{opar}. El cruce se hace por nombre normalizado, que es el único '
-            f'identificador común entre los dos padrones.</div>')
+            f'{opar}</a>: fue reelegida, así que su trayectoria va en dos fichas, '
+            f'una por Congreso. Cruce por nombre normalizado, el único '
+            f'identificador común entre ambos padrones.</div>')
     all_bills = sorted(d["leg_bills"].get(slug, []),
                        key=lambda x: (d["bill_by_id"][x[0]]["presented_on"] or ""),
                        reverse=True)
@@ -3124,8 +3223,8 @@ def render_leg(d, L, base):
              f'<div class="tile"><dt>Mociones firmadas</dt><dd>{len(mots)}'
              f'{baseline(base["mots"][L["chamber"]], "mociones")}</dd></div>')
     # A presence rate is only honest over roll calls the member could have
-    # voted in. Chairing the session and holding a licencia are not absences —
-    # publishing them as 0% attendance is a falsehood about a named person.
+    # voted in. Chairing the session and holding a licencia are not absences.
+    # Publishing them as 0% attendance is a falsehood about a named person.
     votable = [(vv, p) for vv, p in vts if pos(p)[1] in ("voto", "falta")]
     excused = [(vv, p) for vv, p in vts if p == "LICENCIA"]
     chaired = [(vv, p) for vv, p in vts if p == "PRESIDENCIA"]
@@ -3169,9 +3268,8 @@ def render_leg(d, L, base):
     bl = bill_list("Proyectos de ley firmados en este periodo", mine)
     bl += bill_list(
         "Proyectos firmados en el Congreso 2021-2026", past,
-        "<p class='sm mut'>Cruzados por nombre con el registro del Congreso "
-        "unicameral anterior. No cuentan en las cifras de arriba, que miden "
-        "solo el periodo 2026-2031.</p>")
+        "<p class='sm mut'>Cruzados por nombre con el registro anterior. No "
+        "cuentan en las cifras de arriba.</p>")
     ml = ""
     if mots:
         by_id = {m["id"]: m for m in d["motions"]}
@@ -3207,22 +3305,21 @@ def render_leg(d, L, base):
               '<thead><tr><th>Fecha</th><th>Asunto</th><th>Su voto</th>'
               '<th>Resultado</th></tr></thead><tbody>' + "".join(vrows)
               + "</tbody></table></div>"
-              + ('<p class="sm mut">En las votaciones marcadas, las fuentes '
-                 'oficiales no coinciden entre sí y la fila de esta persona '
-                 'proviene de nuestra lectura del PDF. La votación enlazada '
-                 'explica la discrepancia.</p>' if caveat else "")
-              + (f'<p class="sm mut">Se apartó de la posición mayoritaria de '
+              + ('<p class="sm mut">En las votaciones marcadas las fuentes '
+                 'oficiales no coinciden. Esta fila sale de nuestra lectura del '
+                 'PDF, y la votación enlazada explica por qué.</p>' if caveat else "")
+              + (f'<p class="sm mut">Se apartó de la mayoría de '
                  f'{esc(L["party"] or "su grupo")} en '
-                 f'{len(broke)} de las {len(vts)} votaciones publicadas.</p>'
+                 f'{len(broke)} de {len(vts)} votaciones.</p>'
                  if broke else
-                 f'<p class="sm mut">Votó siempre con la posición mayoritaria de '
-                 f'{esc(L["party"] or "su grupo")} en las votaciones publicadas.</p>'
+                 f'<p class="sm mut">Votó siempre con la mayoría de '
+                 f'{esc(L["party"] or "su grupo")}.</p>'
                  if any(p in ("SI", "NO", "ABST") for _, p in vts) else "")
               + "</section>")
 
     # Comisiones. The block GovTrack has and we did not: where this person
     # actually works. Senate only, because only the Senate's cuadros have been
-    # published in a diario — a deputy gets the reason, not a blank card.
+    # published in a diario. A deputy gets the reason, not a blank card.
     mem = d["leg_cttes"].get(slug, [])
     firm = [m for m in mem if not m["amendment"]]
     chg = [m for m in mem if m["amendment"]]
@@ -3236,10 +3333,10 @@ def render_leg(d, L, base):
             # change can land on a committee already listed above. Saying which
             # is the change beats printing the same name twice with no comment.
             same = mark and m["committee_id"] in seats
-            note = (f' <span class="rank">— el oficio lo dejó como '
+            note = (f' <span class="rank">el oficio lo dejó como '
                     f'{esc(m["role"])} en lugar de {esc(seats[m["committee_id"]])}'
                     f'</span>' if same and seats[m["committee_id"]] != m["role"]
-                    else ' <span class="rank">— confirmado por oficio</span>'
+                    else ' <span class="rank">confirmado por oficio</span>'
                     if same else "")
             return (f'<li><a href="{ctte_url(r, c)}">{esc(c["name"])}</a> '
                     f'<span class="rank">{esc(m["role"])}</span>{note}</li>')
@@ -3250,29 +3347,25 @@ def render_leg(d, L, base):
         ct_html = (
             f'<section><h2>Comisiones ({len(firm)})</h2>'
             f'<ul class="roll">{"".join(ct_li(m) for m in firm)}</ul>'
-            f'<p class="sm mut">Titular en {ntit}'
-            + (f' y suplente en {len(firm) - ntit}' if len(firm) > ntit else "")
-            + '. El titular ocupa la plaza; el suplente vota y firma el dictamen '
-              'cuando el titular falta.</p>'
+            f'<p class="sm mut" title="El titular ocupa la plaza; el suplente vota '
+            f'y firma el dictamen cuando el titular falta.">Titular en {ntit}'
+            + (f', suplente en {len(firm) - ntit}' if len(firm) > ntit else "")
+            + '.</p>'
             + (f'<h3 style="margin-top:18px">Cambios posteriores ({len(chg)})</h3>'
-               f'<p class="sm mut">Designaciones que su bancada modificó después '
-               f'por oficio. No se suman a las de arriba: sustituyen a otra '
-               f'persona en esa comisión.</p>'
+               f'<p class="sm mut">Designaciones que su bancada cambió por oficio: '
+               f'sustituyen a otra persona, no se suman a las de arriba.</p>'
                f'<ul class="roll">{"".join(ct_li(m, mark=True) for m in chg)}</ul>'
                if chg else "")
-            + '<p class="sm mut">Fuente: Diario de los Debates del Senado. '
-              'Ninguna cámara publica esta composición como dato.</p></section>')
+            + '<p class="sm mut">Fuente: Diario de los Debates del Senado; ninguna '
+              'cámara lo publica como dato.</p></section>')
     elif L["chamber"] == "D":
         ct_html = ('<section><h2>Comisiones</h2><p>La Cámara de Diputados no ha '
-                   'publicado todavía el diario de la sesión en que aprobó sus '
-                   'cuadros de comisiones, que es la única fuente que existe: '
-                   'por eso no podemos decir en cuáles está. En cuanto lo '
-                   'publique, aparecerá aquí.</p></section>')
+                   'publicado el diario en que aprobó sus cuadros de comisiones, '
+                   'que es la única fuente que existe.</p></section>')
     elif L["chamber"] == "S":
-        ct_html = ('<section><h2>Comisiones</h2><p>No figura en ningún cuadro de '
-                   'comisiones del diario en que el Senado los aprobó. Puede '
-                   'haber sido designado después, por oficio de su bancada, en '
-                   'un acta que aún no hemos leído.</p></section>')
+        ct_html = ('<section><h2>Comisiones</h2><p>No figura en ningún cuadro del '
+                   'diario en que el Senado los aprobó. Puede haber sido designado '
+                   'después por oficio, en un acta que aún no leemos.</p></section>')
 
     contact = []
     if L["email"]:
@@ -3291,25 +3384,17 @@ def render_leg(d, L, base):
     if L["email"] or (L["votes_received"] and L["source_url"]):
         contact_html = (
             "<section><h2>Contacto</h2><dl class='kv'>" + "".join(contact) + "</dl>"
-            + ("<p class='sm mut'>Si vive en "
-               f"{esc(L['district'] or 'su circunscripción')}, usted es su "
-               "representado y su oficina atiende pedidos de constituyentes; si "
-               "no, puede escribirle igual, pero la prioridad es de quienes "
-               "representa.</p>" if L["email"] else "")
-            + "<p class='sm mut'><b>Este sitio no es el Congreso.</b> Es un "
-              "registro independiente construido a partir de los datos que el "
-              "Congreso publica. No transmitimos mensajes ni gestionamos "
-              "trámites: escríbale por los canales oficiales de arriba.</p>"
+            + "<p class='sm mut'><b>Este sitio no es el Congreso.</b> No "
+              "transmitimos mensajes ni gestionamos trámites. Escríbale por los "
+              "canales oficiales de arriba.</p>"
             + "</section>")
     elif L["source_url"]:
         contact_html = (
             "<section><h2>Contacto</h2><p>El portal "
-            f"{esc(CHAMBER[L['chamber']])} no publica un correo para esta "
-            f"persona; su <a href=\"{esc(L['source_url'])}\">ficha oficial ↗</a> "
-            "es el único canal directo que existe.</p>"
-            "<p class='sm mut'><b>Este sitio no es el Congreso.</b> Es un "
-            "registro independiente construido a partir de los datos que el "
-            "Congreso publica.</p></section>")
+            f"{esc(CHAMBER[L['chamber']])} no publica un correo suyo; su "
+            f"<a href=\"{esc(L['source_url'])}\">ficha oficial ↗</a> es el único "
+            "canal directo que existe.</p>"
+            "<p class='sm mut'><b>Este sitio no es el Congreso.</b></p></section>")
     bio = f'<section><h2>Reseña</h2><p>{esc(L["bio"])}</p></section>' if L["bio"] else ""
 
     # Where this person sits, drawn in their own chamber. One seat lit, the rest
@@ -3327,14 +3412,11 @@ def render_leg(d, L, base):
                 cls=lambda P: ("diamond", 0, "me") if P["slug"] == slug
                 else ("circle", 0, ""))
             seatmap = f"""<section><h2>Dónde se sienta</h2>
-<figure class="hemifig">{hemicycle(
+<figure class="hemifig" title="{CURULES}">{hemicycle(
     seats, r, sub=f"Escaño de {nice_name(L['full_name'])} en {CHAMBER[L['chamber']]}",
     ident="hemi-seat", groups=hg)}
 <figcaption>Su escaño es el rombo, entre los {len(peers_ch)} de
-{esc(CHAMBER[L["chamber"]])}; las siglas y las líneas de puntos marcan dónde
-empieza cada bancada. Cada escaño enlaza a la ficha de quien lo ocupa. El orden
-dentro de la sala es el de este sitio: el Congreso no publica el plano de
-curules.</figcaption></figure></section>"""
+{esc(CHAMBER[L["chamber"]])}.</figcaption></figure></section>"""
 
     body = f"""
 <div class="crumb"><a href="{r}index.html">Inicio</a> ›
@@ -3351,10 +3433,9 @@ curules.</figcaption></figure></section>"""
 {thin}
 {twin}
 <section><h2>Actividad, comparada con su cámara</h2>{stats}
-<p class="sm mut">Las medianas se calculan sobre los
-{len(base["bills"][L["chamber"]])} integrantes de la cámara, no sobre una
-muestra. El periodo {per} corre hasta el 26 de julio de {L["per_par"] + 5}; la
-próxima elección general es en abril de {L["per_par"] + 5}.</p></section>
+<p class="sm mut">Medianas sobre los {len(base["bills"][L["chamber"]])} integrantes
+de la cámara, no sobre una muestra. El periodo {per} corre hasta julio de
+{L["per_par"] + 5}.</p></section>
 {peer_strips(d, L, base, r)}
 {seatmap}
 {att_block(d, L, base)}
@@ -3365,26 +3446,22 @@ próxima elección general es en abril de {L["per_par"] + 5}.</p></section>
 {ml}
 {vl}
 <section><h2>Descarga y cita</h2>
-<p><a href="{esc(slug)}.csv">Descargar el expediente de
-{esc(nice_name(L["full_name"]))} en CSV</a> — una fila por hecho registrado:
-proyectos firmados, mociones, votaciones nominales, comisiones y cada toma de
-asistencia, con su fecha, su papel y el enlace a la página de este sitio donde
-consta.</p>
+<p><a href="{esc(slug)}.csv" title="Proyectos, mociones, votaciones, comisiones y
+cada toma de asistencia, con fecha, papel y enlace a la página donde consta.">
+Descargar su expediente en CSV</a>, una fila por hecho registrado.</p>
 <p class="sm mut">Cita sugerida: «{esc(nice_name(L["full_name"]))},
 {esc(CHAMBER[L["chamber"]])} {per}», consultado el
 {fecha(dt.date.today().isoformat())}.</p></section>
 {prov([
-    f'Ficha, foto, bancada y circunscripción: portal de la '
+    f'Ficha, foto, bancada y circunscripción: API del portal de la '
     f'{esc(CHAMBER[L["chamber"]])}'
     + (f' (<a href="{esc(L["source_url"])}">ficha oficial ↗</a>)' if L["source_url"] else "")
-    + ', vía su API REST pública.',
-    (f'Asistencia: las listas que cada cámara publica en PDF al pie de la '
-     f'sesión, leídas una por una. Varias llevan el sello PROVISIONAL de la '
-     f'propia cámara; en <a href="{r}asistencia.html">la página de '
-     f'asistencia</a> está cada documento enlazado.') if d["leg_att"].get(slug) else "",
-    f'Firmas de proyectos y mociones: <code>{API}</code>. El Congreso no publica '
-    'un identificador compartido entre el padrón y la base de proyectos, así que '
-    'el cruce se hace por nombre normalizado.',
+    + '.',
+    (f'Asistencia: las listas en PDF de cada sesión, varias con el sello '
+     f'PROVISIONAL de la propia cámara; <a href="{r}asistencia.html">cada '
+     f'documento, enlazado</a>.') if d["leg_att"].get(slug) else "",
+    f'Firmas de proyectos y mociones: <code>{API}</code>, cruzadas por nombre '
+    'normalizado a falta de un identificador compartido.',
     f'Sitio regenerado el {fecha(dt.date.today().isoformat())}.',
 ])}
 """
@@ -3398,7 +3475,7 @@ consta.</p>
 
 # One place for the whole vote vocabulary: label, class, order and definition.
 # `class` is what keeps an unknown or excused state from being published as an
-# absence — the default for anything unrecognised is "no le tocaba votar", never
+# absence. The default for anything unrecognised is "no le tocaba votar", never
 # "faltó", because guessing the wrong way libels a named person.
 POS = {
     "SI": ("A favor", "voto", 0,
@@ -3455,7 +3532,7 @@ def pos_shape(p):
 # ------------------------------------------------------------------ asistencia
 
 # The plain attendance taking, which is a different record from a roll call: it
-# says who was in the room, not how they voted. Same discipline as POS — the
+# says who was in the room, not how they voted. Same discipline as POS. The
 # default for an unrecognised code is an excuse, never an absence.
 ATT = {
     "PRE": ("Presente", "presente",
@@ -3542,7 +3619,7 @@ def base_rates(d):
 
     The bill page claimed on 5 545 pages that «la mayoría de proyectos se quedan
     aquí hasta que termina el periodo». The 2021-2026 Congress is over and its
-    14 864 expedientes are in the DB, so the claim is checkable — and it was
+    14 864 expedientes are in the DB, so the claim is checkable. And it was
     wrong. These are the real rates, computed once per build over the completed
     period, which is the only one that can answer the question at all.
     """
@@ -3627,10 +3704,10 @@ def rate_block(d, b, stage):
                f'llegaron a publicarse como ley y <b>{num(k["quedo"])}</b> '
                f'({pc(k["quedo"])}) se quedaron exactamente aquí.')
     return (f'<section><h2>Qué suele pasar en esta etapa</h2><p>{txt}</p>'
-            f'<p class="sm mut">Tasas medidas sobre el periodo {per}, que ya '
-            f'terminó y por eso es el único que puede responder la pregunta. '
-            f'Son frecuencias históricas del conjunto, no un pronóstico sobre '
-            f'este expediente.</p></section>')
+            f'<p class="sm mut" title="El {per} es el único periodo terminado, y '
+            f'por eso el único que puede responder la pregunta.">Frecuencias '
+            f'históricas del periodo {per}, no un pronóstico sobre este '
+            f'expediente.</p></section>')
 
 # Not every row of a roll call comes from the same place. A vote read aloud and
 # recorded in the Diario de los Debates is a different kind of evidence from a
@@ -3671,7 +3748,7 @@ def tallies(v, rows):
                     (v["n_yes_final"], v["n_no_final"] or 0, v["n_abstain_final"] or 0),
                     v["final_source_url"] or v["source_url"]))
     if v["n_yes"] is not None:
-        out.append(("acta", "Tally impreso en el acta",
+        out.append(("acta", "Conteo impreso en el acta",
                     (v["n_yes"], v["n_no"] or 0, v["n_abstain"] or 0), v["source_url"]))
     if rows:
         out.append(("lista", "Nuestra lectura de la lista nominal",
@@ -3736,9 +3813,10 @@ def render_vote(d, v):
                 last = p
             hgroups[-1][1] += 1
             seats.append((pos_col(x["position"]),
-                          f'{nm} — {p} — {pos(x["position"])[0]}',
+                          f'{nm}, {p}, {pos(x["position"])[0]}',
                           leg_url(r, x["leg"]["slug"]) if x["leg"] else "",
-                          pos_shape(x["position"])))
+                          pos_shape(x["position"]),
+                          seat_card(x["leg"], r, pos(x["position"])[0])))
         seen_pos = sorted(counts, key=lambda k: pos(k)[2])
         # The centre number is the count of the seats actually drawn, never the
         # headline tally: on a disputed roll call those differ by up to six, and
@@ -3746,26 +3824,25 @@ def render_vote(d, v):
         drawn_yes = counts.get("SI", 0)
         src_note = ("" if (yes, no, ab) == (counts.get("SI", 0), counts.get("NO", 0),
                                             counts.get("ABST", 0))
-                    else ' <b>Ojo:</b> el diagrama dibuja nuestra lectura de la '
-                         f'lista nominal ({drawn_yes} a favor), que no coincide '
-                         f'con la cifra del encabezado ({yes}). '
-                         '<a href="#lectura">La discrepancia, explicada</a>.')
-        hemi = f"""<figure class="hemifig">
+                    else f' <b>El diagrama y el encabezado no dicen lo mismo.</b> El arco '
+                         f'dibuja nuestra lectura de la lista, {drawn_yes} a favor; '
+                         f'el encabezado dice {yes}. '
+                         f'<a href="#lectura">Por qué</a>.')
+        # ponytail: la concesión de tamaño vive en el title del <figure>, no en
+        # 130 palabras de pie de foto. Sigue siendo una divulgación; deja de ser
+        # un párrafo de disculpa encima del gráfico.
+        hemi = f"""<figure class="hemifig" title="En un teléfono cada escaño mide
+unos 8 px: a ese tamaño el diagrama es una ilustración y la lista nominal de
+abajo es la versión legible.">
 {hemicycle(seats, r, middle=(str(drawn_yes), "a favor"),
            sub=f"Cómo votó cada escaño de {CHAMBER[ch]}", ident="hemi-vote",
            groups=[tuple(g) for g in hgroups])}
-{key_list([(pos_col(k), esc(pos(k)[0]), counts.get(k, 0)) for k in seen_pos],
-          shapes=[pos_shape(k) for k in seen_pos])}
-<figcaption>Un escaño por fila de la lista nominal, agrupado por bancada, con
-la figura del voto: <b>a favor</b> círculo, <b>en contra</b> rombo,
-<b>abstención</b> triángulo; hueca, quien no votó. En un teléfono cada escaño
-mide unos 8 px y el diagrama queda como ilustración: la
-<a href="#quien">lista ordenable</a> de abajo dice lo mismo a tamaño
-completo.{src_note}</figcaption></figure>"""
+<figcaption>Nombre por nombre, en la
+<a href="#quien">lista ordenable</a>.{src_note}</figcaption></figure>"""
     else:
         # One roll call of five had no diagram at all, because the acta has no
         # nominal list. The honest picture is not "no picture": it is the
-        # chamber, whole, with every seat drawn as an empty ring — the shape
+        # chamber, whole, with every seat drawn as an empty ring, the shape
         # this site already uses for «no consta cómo votó». What the record is
         # missing is a fact about the record, and it is worth a graphic.
         mem = [L for L in d["legs"]
@@ -3781,12 +3858,9 @@ completo.{src_note}</figcaption></figure>"""
 {hemicycle(seats, r, middle=(str(len(mem)), "sin voto en acta"),
            sub=f"Escaños de {CHAMBER[ch]}: esta votación no tiene lista nominal",
            ident="hemi-vote", groups=hg)}
-<figcaption>Los {len(mem)} escaños {esc(DE[ch])}, todos huecos: de esta votación
-el Congreso no publicó lista nominal, así que no consta cómo votó ninguno de
-ellos. El diagrama está aquí, y vacío, porque lo que falta es un dato del
-registro y no un hueco de esta página. Los escaños no enlazan a nada porque no
-hay nada que contar de ninguno: quiénes son está en
-<a href="{r}parlamentarios.html">el padrón</a>.</figcaption></figure>"""
+<figcaption>Los {len(mem)} escaños {esc(DE[ch])}, todos huecos: el Congreso no
+publicó lista nominal de esta votación, así que no consta cómo votó ninguno.
+Quiénes son, en <a href="{r}parlamentarios.html">el padrón</a>.</figcaption></figure>"""
 
     # ---- how each bench voted, as a row of 100% bars. The table below has the
     # exact numbers; this answers "did anyone split" without reading it.
@@ -3820,11 +3894,8 @@ hay nada que contar de ninguno: quiénes son está en
                   + key_list([(pos_col(k), esc(pos(k)[0]), counts.get(k, 0))
                               for k in seen_pos],
                              shapes=[pos_shape(k) for k in seen_pos])
-                  + '<figcaption>Una barra por bancada. Su <b>largo</b> es '
-                    'cuántos integrantes tiene en la lista de esta votación —la '
-                    'más numerosa ocupa el ancho completo— y sus tramos, en qué '
-                    'sentido votaron. La cifra de la derecha es cuántos de ellos '
-                    'votaron distinto a la mayoría de su propio grupo.'
+                  + '<figcaption>Largo de la barra: cuántos integrantes tiene la '
+                    'bancada en esta lista. Tramos: en qué sentido votaron.'
                     '</figcaption></figure>')
     ptable = ""
     if parties:
@@ -3835,7 +3906,7 @@ hay nada que contar de ninguno: quiénes son está en
             return f"{a} de {t}" if t > 1 else "—"
 
         # The same result was on this page three times in a row: the arc, six
-        # bars, then a seven-row table — about 700 px saying one thing. The
+        # bars, then a seven-row table. About 700 px saying one thing. The
         # table is the exact-numbers version, which is the one a reader asks
         # for second, so it folds. At 375px it was 807 px of table in a 347 px
         # window; folded, it costs one 44 px row until somebody wants it.
@@ -3844,7 +3915,9 @@ hay nada que contar de ninguno: quiénes son está en
                   '<div class="scroll"><table><thead><tr><th>Grupo parlamentario</th>'
                   + "".join(f'<th>{esc(pos(h)[0])}</th>' for h in head)
                   + '<th>Total</th><th>% a favor</th>'
-                  '<th>Con la mayoría</th></tr></thead><tbody>'
+                  '<th title="En cuántas votaciones nominales de esta cámara la '
+                  'posición mayoritaria del grupo coincidió con la de la cámara.">'
+                  'Con la mayoría</th></tr></thead><tbody>'
                   + "".join(
                       f'<tr><td class="who2"><a class="bl {gp(p)}" '
                       f'href="{bench_url(r, p)}">{bench_logo(p, r, 24)}'
@@ -3860,12 +3933,8 @@ hay nada que contar de ninguno: quiénes son está en
                   f'<td class="num"><b>{pc(counts.get("SI", 0), sum(counts.get(k, 0) for k in ("SI", "NO", "ABST")))}</b></td>'
                   '<td></td></tr>'
                   '</tbody></table></div>'
-                  '<p class="sm mut">«Con la mayoría» cuenta en cuántas de las '
-                  'votaciones nominales publicadas por esta cámara la posición '
-                  'mayoritaria del grupo coincidió con la de la cámara.</p>'
-                  + ('<p class="sm mut">Ojo: este desglose se calcula sobre '
-                     'nuestra lectura de la lista nominal, que no cuadra con la '
-                     f'cifra del encabezado. {flag}</p>'
+                  + ('<p class="sm mut">Este desglose sale de nuestra lectura de '
+                     f'la lista, que no cuadra con el encabezado. {flag}</p>'
                      if not roster_ok else "")
                   + "</details>")
 
@@ -3883,28 +3952,26 @@ hay nada que contar de ninguno: quiénes son está en
     out_html = ""
     if rows and not outliers:
         out_html = ('<section><h2>Votaron distinto a su bancada</h2>'
-                    '<p>Nadie: en esta votación los '
+                    '<p>Nadie: los '
                     f'{len([p for p, c in parties.items() if sum(c.values()) >= 3])} '
-                    'grupos parlamentarios con tres o más presentes votaron en '
-                    'bloque, sin una sola deserción.</p></section>')
+                    'grupos con tres o más presentes votaron en bloque.</p></section>')
     elif outliers:
         out_html = ('<section><h2>Votaron distinto a su bancada</h2>'
-                    '<p class="sm mut">Comparado con la posición mayoritaria de su '
-                    'propio grupo en esta misma votación. Los grupos de menos de tres '
-                    'integrantes presentes se excluyen porque no tienen mayoría '
-                    'interna que romper.</p><ul class="feed">' + "".join(
+                    '<p class="sm mut">Frente a la posición mayoritaria de su propio '
+                    'grupo en esta votación; se excluyen los grupos de menos de tres '
+                    'presentes.</p><ul class="feed">' + "".join(
                         f'<li><span class="m">{esc(p)} votó mayoritariamente '
                         f'{esc(pos(top)[0])}</span>'
                         + (f'<a class="t" href="{leg_url(r, x["leg"]["slug"])}">'
                            f'{esc(nice_name(x["leg"]["full_name"]))}</a>'
                            if x["leg"] else
                            f'<span class="t">{esc(nice_name(x["name_raw"]))}</span>')
-                        + f' — {esc(pos(x["position"])[0])}</li>'
+                        + f', {esc(pos(x["position"])[0])}</li>'
                         for x, p, top in outliers) + "</ul></section>")
 
     # Every word that appears in the bar, the stat block, the group table and
     # the filter dropdown, defined once where the reader meets them.
-    gloss = ('<details class="gloss" open><summary>Qué significa cada categoría '
+    gloss = ('<details class="gloss"><summary>Qué significa cada categoría '
              'de voto</summary><dl class="kv">' + "".join(
                  f'<div><dt>{esc(pos(k)[0])}</dt><dd>{esc(pos(k)[3])}</dd></div>'
                  for k in sorted(counts, key=lambda k: pos(k)[2]))
@@ -3919,14 +3986,13 @@ hay nada que contar de ninguno: quiénes son está en
         link = (f'<a href="{leg_url(r, pl["slug"])}">{esc(nice_name(pl["full_name"]))}</a>'
                 if pl else esc(who))
         nn = chair or other
-        pres = ('<p class="sm mut">Quien preside no figura con voto: los propios '
-                'reportes advierten que «en este reporte de votación no se '
-                'considera al congresista que ejerce la presidencia». '
-                + (f'En esta sesión presidió {link}. ' if who else "")
-                + f'Por eso {nn} '
+        pres = ('<p class="sm mut" title="Los reportes de votación advierten que '
+                '«no se considera al congresista que ejerce la presidencia».">'
+                + (f'Presidió {link}. ' if who else "")
+                + f'{nn} '
                 + ("integrante aparece" if nn == 1 else "integrantes aparecen")
-                + ' sin sentido de voto, y no lo contamos como inasistencia ni '
-                  'en esta página ni en su ficha personal.</p>')
+                + ' sin sentido de voto por presidir la sesión; no cuenta como '
+                  'inasistencia.</p>')
 
     # roster, rendered client-side so sort/filter can live in the URL
     # "Apellidos, Nombre": the order the chambers publish and the only one
@@ -3997,8 +4063,7 @@ hay nada que contar de ninguno: quiénes son está en
 <th><button data-c="2">Grupo</button></th>
 <th><button data-c="3">Circunscripción</button></th>
 </tr></thead><tbody id="tb">{"".join(srv)}</tbody></table></div>
-<p class="sm mut" id="cnt">{len(rows)} parlamentarios, ordenados por grupo
-parlamentario. Pulse una cabecera para reordenar.</p>
+<p class="sm mut" id="cnt">{len(rows)} parlamentarios, por grupo.</p>
 <script>
 var BL={bl_js},VC={{{vc_js}}};
 function face(x){{return '<span class="'+(x[8]
@@ -4065,9 +4130,9 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
             f'<p>Corresponde al proyecto <a href="{bill_url(r, bill)}">'
             f'{esc(bill["code"])}</a>: {esc(clip(bill["title"], 160))}.'
             + ("" if v["bill_id"] else
-               ' <span class="sm mut">Vínculo deducido del número de proyecto '
-               'citado en el asunto: el acta no trae un campo que lo '
-               'identifique.</span>') + '</p>')
+               ' <span class="sm mut" title="El acta no trae un campo que '
+               'identifique el proyecto.">Vínculo deducido del número citado en '
+               'el asunto.</span>') + '</p>')
     # A vote is one step of a bill's passage. When it resolves to a bill, the
     # bill's own tracker answers "and now what"; when it does not, the honest
     # next step is the acta that supersedes this one.
@@ -4080,19 +4145,16 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
                + ("<ol>" + "".join(f"<li>{esc(s)}</li>" for s in steps) + "</ol>"
                   if steps else "") + "</section>")
     elif _k == "confirmado":
-        nxt = ('<section><h2>Qué pasa después</h2><p>Nada pendiente en el '
-               'registro: el Diario de los Debates ya confirmó este conteo, así '
-               'que la cifra de esta página es la definitiva.</p></section>')
+        nxt = ('<section><h2>Qué pasa después</h2><p>Nada: el Diario de los '
+               'Debates ya confirmó este conteo.</p></section>')
     elif resolved:
         nxt = ('<section><h2>Qué pasa después</h2><p>La corrección leída en sala '
-               'ya está aplicada en esta página. Falta el acta definitiva que la '
-               'Oficialía Mayor publica semanas después: cuando salga, '
-               'compararemos ambas y diremos si cambia algo.</p></section>')
+               'ya está aplicada aquí. Falta el acta definitiva de la Oficialía '
+               'Mayor; cuando salga, compararemos las dos.</p></section>')
     elif v["provisional"] or (rows and not v["parsed"]):
-        nxt = ('<section><h2>Qué pasa después</h2><p>El acta que sirve de fuente '
-               'es provisional. La Oficialía Mayor publica después el resultado '
-               'definitivo, con los votos orales incorporados; cuando aparezca, '
-               'esta página mostrará ambas cifras y cuál reemplaza a cuál.</p>'
+        nxt = ('<section><h2>Qué pasa después</h2><p>El acta que usamos es '
+               'provisional. Cuando la Oficialía Mayor publique la definitiva, con '
+               'los votos orales, esta página mostrará ambas cifras.</p>'
                '</section>')
     legal = LEGAL.get(ch, 130)
     need = emitted // 2 + 1
@@ -4100,20 +4162,16 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
     outcome = (v["result"] or
                ("Aprobada por mayoría simple" if ok else "No alcanzó la mayoría simple"))
     derived = "" if v["result"] else (
-        '<p class="sm mut">El acta de esta sesión no imprime un veredicto en '
-        'texto: publica la lista de votos y nada más. El resultado de arriba lo '
-        'deducimos del conteo, no lo copiamos del documento.</p>')
+        '<p class="sm mut">El acta no imprime veredicto. El resultado de arriba '
+        'lo deducimos del conteo.</p>')
     thr = (f'<section><h2>Qué se necesitaba para aprobar</h2>'
-           f'<p>Una votación ordinaria se aprueba por <b>mayoría simple</b>: más votos '
-           f'a favor que en contra, sobre el quórum ya verificado de la sesión. '
-           f'Se emitieron {emitted} votos, así que el umbral estaba en <b>{need}</b> '
-           f'y hubo <b>{yes}</b>. {"Se superó." if ok else "No se superó."}</p>'
+           f'<p>Se aprueba por <b>mayoría simple</b>. Con {emitted} votos emitidos el '
+           f'umbral estaba en <b>{need}</b> y hubo <b>{yes}</b>. '
+           f'{"Se superó." if ok else "No se superó."}</p>'
            f'{derived}'
-           f'<p class="sm mut">Como referencia: las materias que el Reglamento sujeta '
-           f'a la mayoría del número legal exigen {legal // 2 + 1} votos sobre los '
-           f'{legal} escaños {DE[ch]}. Cuál de las dos reglas invocó '
-           f'la Mesa no consta en el acta como dato estructurado, y no lo '
-           f'inventamos.</p></section>')
+           f'<p class="sm mut">La mayoría del número legal, que el Reglamento exige '
+           f'para otras materias, serían {legal // 2 + 1} de {legal}. Cuál regla '
+           f'invocó la Mesa no consta en el acta.</p></section>')
 
     # The summary bar. It was the one bar on the site written by hand, and it
     # showed: four segments, no rule between them and not a single title, right
@@ -4143,43 +4201,44 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
     warn = ""
     if disputed or v["provisional"] or (rows and not v["parsed"]):
         trows = "".join(
-            f'<tr><td>{esc(lab)}{" — <b>la que usamos arriba</b>" if k == kind else ""}'
+            f'<tr><td>{esc(lab)}{", <b>la que usamos arriba</b>" if k == kind else ""}'
             + (f' <a href="{esc(u)}">documento ↗</a>' if u else "") + "</td>"
             + "".join(f'<td class="num">{n}</td>' for n in t)
             + f'<td class="num">{sum(t)}</td></tr>'
             for k, lab, t, u in tal)
         lead = (
             '<b>El Diario de los Debates confirma el conteo del tablero.</b> '
-            'La versión definitiva del registro coincide con el acta '
-            'electrónica: nada cambió entre una y otra. Las cifras, para que '
-            'pueda comprobarlo:'
+            'Nada cambió entre el acta electrónica y la versión definitiva:'
             if _k == "confirmado" else
-            '<b>El resultado de esta votación se corrigió en la propia sesión.</b> '
-            'El tablero electrónico no recoge los votos que se emiten de viva '
-            'voz; la presidencia los suma y rectifica el conteo en el acto. '
-            'Mostramos la cifra corregida y dejamos a la vista de dónde sale:'
+            '<b>El resultado se corrigió en la propia sesión.</b> El tablero no '
+            'recoge los votos de viva voz. La presidencia los sumó y rectificó el '
+            'conteo en el acto, y esa es la cifra que usamos:'
             if resolved else
-            '<b>Las fuentes de esta votación no coinciden.</b> El Congreso '
-            'publica primero un acta electrónica provisional y después el '
-            'resultado corregido con los votos orales; nuestra lectura del PDF '
-            'es una tercera cifra. Están las tres:')
+            '<b>El registro se contradice consigo mismo.</b> Las fuentes no dan el '
+            'mismo número. Usamos arriba la de más autoridad y dejamos el resto a '
+            'la vista, para que discuta con el documento y no con nosotros:'
+            if disputed else
+            '<b>La cámara publicó esta acta como provisional.</b> Le falta lo que '
+            'se votó de viva voz, así que la cifra puede moverse.'
+            + (' Por ahora las fuentes que tenemos coinciden:' if len(tal) > 1
+               else ''))
         warn = (
             f'<div class="note" id="lectura">{lead}'
-            f'<div class="scroll" style="margin:12px 0"><table><thead><tr>'
-            f'<th>Fuente</th><th>A favor</th><th>En contra</th><th>Abstención</th>'
-            f'<th>Suma</th></tr></thead><tbody>{trows}</tbody></table></div>'
+            + (f'<div class="scroll" style="margin:12px 0"><table><thead><tr>'
+               f'<th>Fuente</th><th>A favor</th><th>En contra</th><th>Abstención</th>'
+               f'<th>Suma</th></tr></thead><tbody>{trows}</tbody></table></div>'
+               if tal else "")
             + (f'<p>{esc(v["parse_note"])}</p>' if v["parse_note"] else "")
-            + (f'<p>{unrec} parlamentarios de los {total} de la lista no quedan '
-               f'explicados por la cifra que mostramos arriba; aparecen como «sin '
-               f'reconciliar» en la barra en vez de desaparecer del total.</p>'
+            + (f'<p>{unrec} de los {total} de la lista no quedan explicados por la '
+               f'cifra de arriba. Van como «sin reconciliar» en la barra en vez de '
+               f'desaparecer del total.</p>'
                if unrec else "")
-            + ('<p>El desglose por bancada y la lista nominal de más abajo '
-               'coinciden con la cifra corregida: los votos orales están '
-               'incorporados fila por fila y marcados como tales.</p>'
+            + ('' if not rows else
+               '<p>El desglose y la lista nominal de abajo llevan la cifra '
+               'corregida, con los votos orales marcados fila por fila.</p>'
                if roster_ok else
-               '<p>El desglose por bancada y la lista nominal de más abajo '
-               'salen de nuestra lectura del PDF, no de la cifra del '
-               'encabezado: contrástelos con el documento original antes de '
+               '<p>El desglose y la lista nominal de abajo salen de nuestra lectura '
+               'del PDF, no del encabezado. Contrástelos con el original antes de '
                'citarlos.</p>') + '</div>')
 
     # Peer baselines: this margin and this turnout against every other roll
@@ -4191,28 +4250,24 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
         rank = sorted(st["margin"], reverse=True).index(
             min(st["margin"], key=lambda m: abs(m - marg))) + 1
         pres_pct = round(100 * emitted / total) if total else 0
-        peers = (f'<p class="sm mut">Para comparar: {esc(CHAMBER[ch])} lleva '
-                 f'{len(st["margin"])} votaciones nominales publicadas. El '
-                 f'{marg}% a favor de esta es el {rank}.º margen más amplio de '
-                 f'las {len(st["margin"])}; la mediana es {median(st["margin"])}%. '
-                 f'Votaron {pres_pct}% de los presentes en la lista, frente a una '
-                 f'mediana de {median(st["presence"])}%.</p>')
+        peers = (f'<p class="sm mut">Sobre las {len(st["margin"])} votaciones '
+                 f'nominales de {esc(CHAMBER[ch])}: {marg}% a favor es el '
+                 f'{rank}.º margen más amplio (mediana {median(st["margin"])}%), y '
+                 f'votó el {pres_pct}% de la lista (mediana '
+                 f'{median(st["presence"])}%).</p>')
 
     # A show-of-hands vote has a result and no numbers at all. Printing
     # "0 a favor" would be a lie; the honest page says the count does not exist.
     no_count = not rows and v["n_yes"] is None
     if no_count:
-        lede_tail = ('. No hay conteo nominal: la votación no pasó por el '
-                     'sistema electrónico, de modo que no existe registro de '
-                     'cómo votó cada quien.')
+        lede_tail = ('. Sin conteo nominal: la votación no pasó por el sistema '
+                     'electrónico.')
         lede_src = ("Así consta en el acta de la sesión."
                     if not v["parse_note"] else esc(v["parse_note"]))
         result_block = (
-            '<section><h2>Resultado</h2><p>El acta consigna el sentido del '
-            'acuerdo pero ningún número: no hubo votación nominal que '
-            'registrar. Esta página no puede decirle cómo votó su '
-            'parlamentario en esta ocasión, porque el Congreso tampoco lo '
-            'publicó.</p>'
+            '<section><h2>Resultado</h2><p>El acta consigna el acuerdo y ni un solo '
+            'número. Esta página no puede decirle cómo votó su parlamentario, '
+            'porque el Congreso tampoco lo publicó.</p>'
             + (f'<p class="sm mut">{esc(v["parse_note"])}</p>'
                if v["parse_note"] else "") + hemi + f'{pres}</section>')
     else:
@@ -4220,14 +4275,10 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
                      + (f' y {novote} sin votar' if novote else "")
                      + f', sobre los {legal} escaños {esc(DE[ch])}.')
         lede_src = f"Cifra tomada de: {esc(kind_label.lower())}."
+        # ponytail: el arco, cuatro azulejos y la barra decían la misma cifra
+        # tres veces. Queda el arco con la leyenda de la barra pegada debajo; el
+        # reparto sobre los votos emitidos ya lo hace «Qué se necesitaba».
         result_block = f"""<section><h2>Resultado</h2>{hemi}
-<dl class="tiles" style="margin-top:24px">
-<div class="tile"><dt>A favor</dt><dd>{yes}<small>{pc(yes, emitted)} de los votos emitidos</small></dd></div>
-<div class="tile"><dt>En contra</dt><dd>{no}<small>{pc(no, emitted)} de los votos emitidos</small></dd></div>
-<div class="tile"><dt>Abstenciones</dt><dd>{ab}<small>{pc(ab, emitted)} de los votos emitidos</small></dd></div>
-<div class="tile"><dt>Sin votar</dt><dd>{novote}<small>{pc(novote, legal)} del número legal
-{f"· {lic} con licencia" if lic else ""}</small></dd></div>
-</dl>
 <div style="margin-top:22px">{bar}</div>
 {peers}
 {pres}</section>
@@ -4250,7 +4301,7 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
 {out_html}
 {roster}
 <section><h2>Descarga y cita</h2>
-{f'<p><a href="{esc(v["slug"])}.csv">Descargar esta votación en CSV</a> — una fila por parlamentario, con su identificador estable, nombre, grupo, circunscripción, sentido del voto y el estado de fiabilidad de la lectura.</p>' if rows else '<p>No hay CSV que descargar: sin votación nominal no hay filas que exportar.</p>'}
+{f'<p><a href="{esc(v["slug"])}.csv" title="Identificador estable, nombre, grupo, circunscripción, sentido del voto y estado de fiabilidad de la lectura.">Descargar esta votación en CSV</a>, una fila por parlamentario.</p>' if rows else '<p>No hay CSV: sin votación nominal no hay filas que exportar.</p>'}
 <p class="sm mut">Cita sugerida: «Votación nominal {esc(CHAMBER[ch])},
 {fecha(v["held_on"])}: {esc(clip(v["subject"], 80))}», consultada el
 {fecha(dt.date.today().isoformat())}.</p></section>
@@ -4262,9 +4313,9 @@ if(S.q||S.gp||S.v||S.c!==2||S.d!==1)draw();
      f'definitivo ↗</a>.') if v["final_source_url"] else "",
     f'Descargado el {fecha(v["fetched_at"])}.' if v["fetched_at"] else "",
     esc(v["parse_note"] or ""),
-    'El Congreso publica el acta electrónica el mismo día y la versión '
-    'definitiva después; esta copia se regenera en cada corrida de la ingesta.',
-    f'Identificador interno de esta votación: <code>{esc(v["id"])}</code>.',
+    'La versión definitiva del acta se publica después; esta copia se regenera '
+    'en cada corrida de la ingesta.',
+    f'Identificador interno: <code>{esc(v["id"])}</code>.',
 ])}
 """
     return shell(short_title(CHAMBER_SHORT[ch] + " " + (fecha(v["held_on"]) or ""),
@@ -4280,7 +4331,7 @@ def _js(s):
 
 def vote_csv(d, v):
     """One row per legislator, with a stable id to join on and the reliability
-    of the reading carried in the data — a download that drops the dispute the
+    of the reading carried in the data. A download that drops the dispute the
     page shows is a worse lie than not publishing it."""
     rows = d["vrows"].get(v["id"], [])
     tal, _ = tallies(v, rows)
@@ -4314,7 +4365,7 @@ def vote_csv(d, v):
 def leg_csv(d, L):
     """One legislator's whole record, one row per fact. Same shape for a bill,
     a motion, a vote, a committee seat and an attendance taking, because the
-    question people bring to it — «what did this person do» — does not care
+    question people bring to it, «what did this person do», does not care
     which table it came from."""
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -4359,7 +4410,7 @@ def leg_csv(d, L):
 
 
 def bills_csv(d, bs):
-    """The corpus behind a facet page, whole — not the 250 rows one page shows."""
+    """The corpus behind a facet page, whole, not the 250 rows one page shows."""
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["bill_id", "codigo", "periodo", "camara", "numero", "titulo",
@@ -4401,7 +4452,7 @@ def att_series(d):
     """Attendance per taking, one small chart per chamber.
 
     Two chambers with different rosters are two measures, so they are two
-    charts and never two scales on one — a 60-seat Senate and a 130-seat
+    charts and never two scales on one. A 60-seat Senate and a 130-seat
     Diputados sharing an axis would make the Senate look empty.
     """
     out = []
@@ -4418,11 +4469,8 @@ def att_series(d):
             f'<figure><h3 style="margin:0 0 10px"><span class="chip '
             f'{ch.lower()}">{esc(CHAMBER[ch])}</span></h3>'
             + col_chart(rows, "presentes", 160, f"att-{ch}", "var(--si)")
-            + f'<figcaption>Cuántos quedaron registrados como presentes en cada '
-              f'una de las {len(ss)} tomas, en el orden en que se tomaron, sobre '
-              f'un máximo de {LEGAL[ch]} escaños. La mediana es {med}. La '
-              f'etiqueta del eje es el día y el mes; el nombre completo de la '
-              f'toma está en cada columna.</figcaption></figure>')
+            + f'<figcaption>Presentes en cada una de las {len(ss)} tomas, sobre '
+              f'{LEGAL[ch]} escaños. Mediana: {med}.</figcaption></figure>')
     return "".join(out) or ""
 
 
@@ -4432,7 +4480,7 @@ def att_gloss(d, s):
     for x in s["rows"]:
         lab, _k, w = att_state(d, s, x)
         why[lab] = w
-    return ('<details class="gloss" open><summary>Qué significa cada estado de '
+    return ('<details class="gloss"><summary>Qué significa cada estado de '
             'la lista</summary><dl class="kv">' + "".join(
                 f'<div><dt>{esc(lab)}</dt><dd>{esc(why[lab])}</dd></div>'
                 for lab in seen) + "</dl></details>")
@@ -4463,38 +4511,28 @@ def render_att(d, s):
 <a href="{r}asistencia.html">Asistencia</a> › {esc(CHAMBER[ch])}</div>
 <span class="eyebrow">{esc(CHAMBER[ch])} · toma de asistencia</span>
 <h1>Asistencia del {fecha(s["held_on"])}, {esc(s["taken_at"])}</h1>
-<p class="lede">De los {t["total"]} integrantes {esc(DE[ch])},
-<b>{t["asistieron"]}</b> figuran presentes ({esc(rate_txt) if usable else "—"} de
-los {t["base"]} a quienes les correspondía estar),
-<b>{t["falta"]}</b> ausentes y <b>{t["excusa"]}</b> con licencia. Una licencia no
-es una inasistencia y quien preside tampoco falta: los contamos aparte.</p>
-{'<div class="note">La cámara publica este documento con el sello PROVISIONAL. Los nombres y los estados son los que imprime esa versión; si publica una definitiva que los corrija, esta página cambiará con ella.</div>' if prov_pdf else ""}
-<section><h2>Resultado de la toma</h2>{att_bar(t)}
-<dl class="tiles" style="margin-top:20px">
-<div class="tile"><dt>Presentes</dt><dd>{t["presente"]}<small>de {t["base"]} a
-quienes les correspondía estar</small></dd></div>
-<div class="tile"><dt>Ausentes</dt><dd>{t["falta"]}<small>sin licencia
-registrada en esta toma</small></dd></div>
-<div class="tile"><dt>Con licencia</dt><dd>{t["excusa"]}<small>justificadas por
-la Mesa Directiva: fuera del denominador</small></dd></div>
-<div class="tile"><dt>Quórum legal</dt><dd>{LEGAL.get(ch, 130) // 2 + 1}<small>mitad más uno
-de los {LEGAL.get(ch, 130)} escaños {esc(DE[ch])}</small></dd></div>
-</dl></section>
-{f'<section><h2>Faltaron ({len(faltaron)})</h2><ul class="roll">' + "".join(f"<li>{w}</li>" for w in faltaron) + '</ul><p class="sm mut">Sin licencia registrada en esta toma. Una inasistencia a una toma no es una inasistencia a la sesión: la lista se pasa varias veces y una persona puede entrar después.</p></section>' if faltaron else '<section><h2>Faltaron</h2><p>Nadie sin licencia: en esta toma la lista registró a todos los que no estaban de licencia.</p></section>'}
+<p class="lede"><b>{t["asistieron"]}</b> presentes de los {t["base"]} a quienes
+les correspondía estar ({esc(rate_txt) if usable else "—"}). El quórum legal
+{esc(DE[ch])} es {LEGAL.get(ch, 130) // 2 + 1}, la mitad más uno de
+{LEGAL.get(ch, 130)}. Licencia y presidencia se cuentan aparte, nunca como
+inasistencia.</p>
+{'<div class="note">La cámara sella este documento como PROVISIONAL: si publica una versión definitiva, esta página cambiará con ella.</div>' if prov_pdf else ""}
+<section><h2>Resultado de la toma</h2>{att_bar(t)}</section>
+{f'<section><h2>Faltaron ({len(faltaron)})</h2><ul class="roll">' + "".join(f"<li>{w}</li>" for w in faltaron) + '</ul><p class="sm mut">Sin licencia en esta toma. Faltar a una toma no es faltar a la sesión. La lista se pasa varias veces y se puede entrar después.</p></section>' if faltaron else '<section><h2>Faltaron</h2><p>Nadie sin licencia.</p></section>'}
 <section><h2>Lista completa ({t["total"]})</h2>
 {att_gloss(d, s)}
 <div class="filters"><input id="q" type="search"
  placeholder="Busca a tu parlamentario o su bancada" aria-label="Filtrar la lista"></div>
 <div class="scroll"><table><thead><tr><th>Estado</th><th>Parlamentario</th>
 <th>Grupo parlamentario</th></tr></thead><tbody id="ls">{"".join(rows)}</tbody>
-</table></div><p class="sm mut" id="cnt">{t["total"]} nombres, en el orden de la
-lista oficial.</p>
+</table></div><p class="sm mut" id="cnt">{t["total"]} nombres, en el orden
+oficial.</p>
 {FILTER_JS}</section>
 {prov([
     f'Lista de asistencia publicada por {esc(CHAMBER[ch])}: '
     f'<a href="{esc(s["source_url"])}">documento original ↗</a>.',
-    'El Congreso no publica la asistencia como dato: cada toma se lee del PDF '
-    'de la sesión, incluida la hora, que es lo que distingue una toma de otra.',
+    'El Congreso no publica la asistencia como dato: cada toma, con su hora, se '
+    'lee del PDF de la sesión.',
     'Documento marcado PROVISIONAL por la propia cámara.' if prov_pdf else "",
     f'Regenerado el {fecha(dt.date.today().isoformat())}.',
 ])}""", depth=1,
@@ -4553,38 +4591,32 @@ def render_att_index(d, today):
     body = f"""<span class="eyebrow">Asistencia al Pleno</span>
 <h1>{len(d["sesiones"])} tomas de asistencia</h1>
 <p class="lede">Quién estuvo en el hemiciclo y quién no, sesión por sesión.
-Cada sesión pasa lista más de una vez y cada toma tiene su hora, así que la
-unidad de esta página es la toma, no el día. Son {num(total_rows)} registros
-individuales leídos de los PDF que publican las cámaras.</p>
-<div class="note">Dos reglas que este sitio no rompe: <b>una licencia no es una
-inasistencia</b> —es un permiso de la Mesa Directiva y queda fuera del
-denominador— y <b>quien preside la sesión no está faltando</b>, aunque la lista
-no le registre marca. Los porcentajes de esta página se calculan solo sobre las
-tomas en las que a la persona le correspondía estar.</div>
+{num(total_rows)} registros leídos de los PDF de las cámaras. La unidad es la
+toma, no el día. Cada sesión pasa lista varias veces.</p>
+<div class="note"><b>Una licencia no es una inasistencia.</b> Es un permiso de la
+Mesa Directiva. Y <b>quien preside no está faltando</b>, aunque la lista no le
+ponga marca. Ninguna de las dos entra en el denominador de esta página.</div>
 <section><h2>Resumen por cámara</h2><dl class="tiles">{"".join(per_ch)}</dl></section>
 <section><h2>Cuánta gente hubo en cada toma</h2>{att_series(d)}</section>
 <section><h2>Sesión por sesión</h2>
 <div class="scroll"><table><thead><tr><th>Sesión</th><th>Hora</th><th>Cámara</th>
 <th>Presentes</th><th>Ausentes</th><th>Licencias</th>
 <th>% de quienes debían estar</th>
-</tr></thead><tbody>{"".join(trows)}</tbody></table></div>
-<p class="sm mut">Cada fecha abre la lista nominal completa de esa toma, con el
-estado de cada parlamentario y el enlace a su ficha.</p></section>
+</tr></thead><tbody>{"".join(trows)}</tbody></table></div></section>
 {f'''<section><h2>Quiénes acumulan más inasistencias</h2>
 <div class="scroll"><table><thead><tr><th>Parlamentario</th><th>Cámara</th>
 <th>Grupo</th><th>Inasistencias</th><th>Tomas que le correspondían</th>
 <th>Licencias</th></tr></thead><tbody>{rrows}</tbody></table></div>
-<p class="sm mut">Se cuentan inasistencias, no porcentajes: con {len(d["sesiones"])}
-tomas registradas en total, un porcentaje sobre tan pocas oportunidades exagera
-cualquier diferencia. Las licencias se muestran al lado precisamente para que no
-se confundan con faltas.</p></section>''' if top else ""}
+<p class="sm mut">Conteos, no porcentajes. Sobre {len(d["sesiones"])} tomas un
+porcentaje exagera cualquier diferencia. Las licencias van al lado para que no se
+confundan con faltas.</p></section>''' if top else ""}
 {prov([
-    'Listas de asistencia publicadas en PDF por cada cámara al pie de la sesión. '
-    'No existen como dato estructurado en ningún portal: cada una se lee del PDF.',
+    'Listas de asistencia en PDF de cada cámara: no existen como dato en ningún '
+    'portal.',
     'Documentos: ' + " · ".join(f'<a href="{esc(u)}">{esc(pathlib.PurePath(u).name)} ↗</a>'
                                 for u in srcs),
-    'Varias listas llevan el sello PROVISIONAL de la propia cámara; la página de '
-    'cada toma lo dice cuando es el caso.',
+    'Varias llevan el sello PROVISIONAL de la propia cámara; la página de cada '
+    'toma lo dice.',
     f'Regenerado el {fecha(today)}.',
 ])}"""
     return shell("Asistencia al Pleno", body, 0,
@@ -4630,8 +4662,7 @@ def alias_note(rows, c):
             + " a esta comisión "
             + " y ".join(f"«{esc(n)}»" for n in names)
             + f'. Es el mismo órgano que el cuadro aprobado nombra '
-              f'«{esc(c["name"])}»: lo tratamos como uno solo en lugar de '
-              f'abrirle una comisión aparte que no existe.</p>')
+              f'«{esc(c["name"])}»; lo tratamos como uno solo.</p>')
 
 
 def roster(d, c, r="../"):
@@ -4658,19 +4689,16 @@ def roster(d, c, r="../"):
         # ponytail: the ingester keyed this roster onto a committee of the same
         # name from the 2021-2026 Congress. Saying so is cheaper and more honest
         # than silently re-parenting rows here.
-        out.append('<div class="note">Este cuadro es el que aprobó el Senado '
-                   '2026-2031. Los proyectos de más abajo son del Congreso '
-                   'unicameral 2021-2026, que tuvo una comisión con el mismo '
-                   'nombre.</div>')
+        out.append('<div class="note">Este cuadro es el del Senado 2026-2031; los '
+                   'proyectos de abajo son del Congreso unicameral 2021-2026, que '
+                   'tuvo una comisión homónima.</div>')
     if tit:
         # Which benches hold this committee. A dictamen needs a majority of the
         # titulares, so the split is the whole story of what can come out of it.
         out.append('<figure style="margin:0 0 22px">' + bench_split(
             tit, lambda m: m["bench"] or (m["leg"] or {}).get("party"), r)
-            + '<figcaption>Composición del cuadro de titulares por bancada. Un '
-              'dictamen sale con la mayoría de las plazas titulares, así que '
-              'este reparto es lo que decide qué puede salir de aquí.'
-              '</figcaption></figure>')
+            + '<figcaption>Los titulares, por bancada: un dictamen sale con la '
+              'mayoría de estas plazas.</figcaption></figure>')
         out.append(f'<h3>Titulares ({len(tit)})</h3><ul class="roll" id="titulares">'
                    + "".join(mem_li(r, m) for m in tit) + "</ul>")
     if sup:
@@ -4678,18 +4706,17 @@ def roster(d, c, r="../"):
                    f'<ul class="roll" id="suplentes">'
                    + "".join(mem_li(r, m) for m in sup) + "</ul>")
     if tit or sup:
-        out.append('<p class="sm mut" style="margin-top:14px">El titular ocupa la '
-                   'plaza; el suplente la ocupa cuando el titular falta, y en esa '
-                   'sesión vota y firma el dictamen en su lugar.</p>')
+        out.append('<p class="sm mut" style="margin-top:14px">El suplente ocupa la '
+                   'plaza cuando el titular falta, y en esa sesión vota y firma el '
+                   'dictamen.</p>')
     if amd:
         out.append(
             (f'<h3 style="margin-top:22px">Cambios posteriores ({len(amd)})</h3>'
-             f'<p class="sm mut">Una bancada puede cambiar a quien designó '
-             f'mediante un oficio leído en sesión. Estas {len(amd)} líneas '
-             f'sustituyen designaciones del cuadro de arriba: no son plazas '
-             f'adicionales y por eso no se suman al total.</p>' if tit or sup else
-             '<p class="sm mut">Cada línea sustituye a la persona que la bancada '
-             'había designado antes; no es una plaza adicional.</p>')
+             f'<p class="sm mut">Oficios leídos en sesión: estas {len(amd)} líneas '
+             f'sustituyen designaciones del cuadro de arriba, no son plazas '
+             f'adicionales.</p>' if tit or sup else
+             '<p class="sm mut">Cada línea sustituye a quien la bancada había '
+             'designado antes; no es una plaza adicional.</p>')
             + f'<ul class="roll" id="cambios">'
             + "".join(mem_li(r, m, tag=m["role"]) for m in amd)
             + "</ul>"
@@ -4710,10 +4737,8 @@ def ctte_prov(d, c, today):
         src = diario_url(ms[0]["source_url"])
         lines.append(
             f'Composición: <a href="{esc(src)}">Diario de los Debates del Senado, '
-            f'sesión en que se aprobaron los cuadros de comisiones ↗</a>. '
-            f'Ninguna cámara publica la composición de sus comisiones como dato '
-            f'—no hay API, ni tabla, ni listado— así que estos {len(ms)} nombres '
-            f'están leídos del PDF de esa acta.')
+            f'sesión de aprobación de los cuadros ↗</a>. Ninguna cámara la publica '
+            f'como dato, así que estos {len(ms)} nombres se leyeron de ese PDF.')
     if c["url"]:
         lines.append(f'<a href="{esc(c["url"])}">Página oficial de la comisión ↗</a>.')
     lines.append(f'Regenerado el {fecha(today)}.')
@@ -4722,8 +4747,8 @@ def ctte_prov(d, c, today):
 
 # --------------------------------------------------------------- bancadas
 #
-# The bench is the unit people actually reason about — «¿qué hizo Fuerza
-# Popular?» — and it had no page at all. One per bench, plus an index, and every
+# The bench is the unit people actually reason about, «¿qué hizo Fuerza
+# Popular?», and it had no page at all. One per bench, plus an index, and every
 # chip anywhere on the site points here.
 
 def people_grid(legs, r="", per_bench=False):
@@ -4734,7 +4759,7 @@ def people_grid(legs, r="", per_bench=False):
     for L in sorted(legs, key=lambda L: (bench_slot(L["party"]) or 99,
                                          L["full_name"])):
         # The initials sit behind the portrait, so a photo that has not loaded
-        # yet — or that the chamber deletes from under us — leaves a lettered
+        # yet, or that the chamber deletes from under us, leaves a lettered
         # tile rather than an empty grey rectangle.
         ini = esc(initials(L["full_name"]))
         img = photo_img(L, r, 400, 500, "(min-width:760px) 190px, 45vw")
@@ -4814,8 +4839,7 @@ def render_bancada(d, party, today):
                       + ("en todas votó en bloque" if allsame else
                          "en " + str(sum(1 for u in unity if u == 100))
                          + " de ellas votó en bloque")
-                      + '. Son muy pocas para un porcentaje con '
-                        'sentido</small></dd></div>')
+                      + '. Son muy pocas para un porcentaje</small></dd></div>')
     else:
         unity_tile = ""
     vrows = ""
@@ -4853,10 +4877,9 @@ def render_bancada(d, party, today):
             + hemicycle(seats, r, middle=(f"{got}", f"de {len(peers)}"),
                         sub=f"Escaños de {party} en {name}", ident=f"hemi-{ch}",
                         groups=hg)
-            + f'<figcaption>{got} de los {len(peers)} escaños '
-              f'({round(100 * got / len(peers))} %). Los suyos son los círculos '
-              f'llenos; los de las otras bancadas, los anillos huecos. Cada uno '
-              f'enlaza a la ficha de quien lo ocupa.</figcaption></figure>')
+            + f'<figcaption>{got} de {len(peers)} escaños '
+              f'({round(100 * got / len(peers))} %): los círculos llenos.'
+              f'</figcaption></figure>')
 
     cr = f"{r}{LOGO_CREDIT}"
     body = f"""<div class="crumb"><a href="{r}index.html">Inicio</a> ›
@@ -4865,21 +4888,20 @@ def render_bancada(d, party, today):
 <div><span class="eyebrow">Grupo parlamentario</span>
 <h1>{esc(party)}</h1></div></div>
 <p class="lede">{len(mem)} parlamentarios en ejercicio: {len(dips)} en la
-Cámara de Diputados y {len(sens)} en el Senado. Aquí está quiénes son, cómo ha
-votado el grupo en cada votación nominal publicada y qué ha firmado.</p>
+Cámara de Diputados y {len(sens)} en el Senado.</p>
 <dl class="tiles" style="margin-top:22px">
 <div class="tile"><dt>Escaños</dt><dd>{len(mem)}<small>{len(dips)} diputados ·
 {len(sens)} senadores, de 190 en total</small></dd></div>
-<div class="tile"><dt>Proyectos firmados</dt><dd>{len(bills)}<small>proyectos de
-ley del periodo 2026-2031 con al menos una firma del grupo</small></dd></div>
+<div class="tile"><dt>Proyectos firmados</dt><dd>{len(bills)}<small>del periodo
+2026-2031, con al menos una firma del grupo</small></dd></div>
 <div class="tile"><dt>Mociones firmadas</dt><dd>{len(mots)}<small>de las
-{len(d["motions"])} presentadas hasta hoy</small></dd></div>
+{len(d["motions"])} presentadas</small></dd></div>
 {unity_tile}
 <div class="tile"><dt>Plazas de titular</dt><dd>{len(ctte)}<small>en los cuadros
-de comisiones publicados, que hoy son solo los del Senado</small></dd></div>
+publicados, hoy solo los del Senado</small></dd></div>
 </dl>
 {"<section><h2>Dónde se sientan</h2>" + "".join(maps) + "</section>" if maps else ""}
-{"<section><h2>Cómo ha votado el grupo</h2>" + vrows + "<p class='sm mut'>Una barra por votación nominal, al 100 % de los integrantes del grupo que figuran en la lista. Cada fila enlaza a la votación completa.</p></section>" if vrows else "<section><h2>Cómo ha votado el grupo</h2><p>Todavía no hay ninguna votación nominal publicada en la que figuren sus integrantes.</p></section>"}
+{"<section><h2>Cómo ha votado el grupo</h2>" + vrows + "<p class='sm mut'>Una barra por votación, al 100 % de los integrantes del grupo en esa lista.</p></section>" if vrows else "<section><h2>Cómo ha votado el grupo</h2><p>Todavía no hay votaciones nominales publicadas en que figuren sus integrantes.</p></section>"}
 <section><h2>Integrantes ({len(mem)})</h2>
 {f'<h3 style="margin:18px 0 10px">Cámara de Diputados ({len(dips)})</h3>' + people_grid(dips, r, per_bench=True) if dips else ""}
 {f'<h3 style="margin:26px 0 10px">Senado ({len(sens)})</h3>' + people_grid(sens, r, per_bench=True) if sens else ""}
@@ -4888,8 +4910,8 @@ de comisiones publicados, que hoy son solo los del Senado</small></dd></div>
     f'Padrón, foto, bancada y circunscripción: portales de las cámaras, vía su '
     f'API REST.',
     f'Votaciones nominales: las actas en PDF de cada sesión.',
-    f'Logotipo de {esc(party)}: {logo_credit_line(party)}. Se usa aquí para '
-    f'identificar al grupo; el partido no respalda este sitio. '
+    f'Logotipo de {esc(party)}: {logo_credit_line(party)}. Identifica al grupo; '
+    f'el partido no respalda este sitio. '
     f'<a href="{cr}">Autoría y licencia de cada logotipo</a>.',
     f'Regenerado el {fecha(today)}.'])}"""
     return shell(f"{party} · bancada", body, 1,
@@ -4917,13 +4939,11 @@ def render_bancadas(d, today):
     body = f"""<span class="eyebrow">Bancadas</span>
 <h1>{len(rows)} grupos parlamentarios</h1>
 <p class="lede">Los {len(rows)} grupos que se repartieron los {tot} escaños del
-Congreso 2026-2031. Cada uno tiene su página con quiénes lo integran, cómo ha
-votado en cada votación nominal y qué ha firmado.</p>
+Congreso 2026-2031.</p>
 <ul class="bgrid">{"".join(rows)}</ul>
-<div class="note">El color de cada bancada lo asignamos nosotros y es el mismo
-en todo el sitio, para que una tabla de 130 nombres se pueda leer de un vistazo.
-No es el color del partido: los logotipos sí son suyos, y están aquí para
-identificarlos, no porque respalden este sitio.
+<div class="note">El color de cada bancada lo asignamos nosotros, no es el del
+partido. Los logotipos sí son suyos y están aquí para identificarlas, no porque
+respalden este sitio.
 <a href="{LOGO_CREDIT}">Autoría y licencia de cada logotipo</a>.</div>
 {prov(['Padrón y bancada: portales de la Cámara de Diputados y del Senado, vía '
        'su API REST.',
@@ -4976,10 +4996,10 @@ def paginate(name, title, intro, rows_html, depth, per=PER_PAGE, prov_lines=()):
       is the one thing every row in these lists has; and
 
     · the hoist. `repetido` is a chip that may or may not be worth printing per
-      row. When the same one lands on most of THIS page — 162 of 250 rows said
-      `EN COMISIÓN`, 19 of 24 on the tail page said `PUBLICADA EN EL DIARIO
-      OFICIAL EL PERUANO` — it is said once at the top and struck from the rows
-      that agree with it, so what is left in the scroll is the exceptions.
+      row. When the same one lands on most of THIS page it is said once at the
+      top and struck from the rows that agree with it, so what is left in the
+      scroll is the exceptions. 162 of 250 rows said `EN COMISIÓN`; 19 of 24 on
+      the tail page said `PUBLICADA EN EL DIARIO OFICIAL EL PERUANO`.
       Computed per page and not per facet: which state dominates changes as you
       page through a list sorted by date.
     """
@@ -4998,11 +5018,9 @@ def paginate(name, title, intro, rows_html, depth, per=PER_PAGE, prov_lines=()):
                 drop = ()
             else:
                 word = re.sub("<[^>]+>", " ", drop[-1]).strip()
-                hoist = (f'<p class="sm mut"><b>{num(k)} de las {num(nrows)} '
-                         f'filas de esta página</b> están en el mismo estado, '
-                         f'«{esc(word)}»: se dice aquí y no {num(k)} veces más '
-                         f'abajo. Las {num(nrows - k)} que llevan etiqueta son '
-                         f'las que están en otro.</p>')
+                hoist = (f'<p class="sm mut"><b>{num(k)} de {num(nrows)} filas</b> '
+                         f'están en «{esc(word)}». Las {num(nrows - k)} etiquetadas '
+                         f'son las que no.</p>')
             marked, last = [], object()
             for g, rep, li in chunk:
                 if g != last:
@@ -5031,6 +5049,29 @@ def paginate(name, title, intro, rows_html, depth, per=PER_PAGE, prov_lines=()):
 
 def main():
     t0 = time.time()
+    # One build at a time per output directory. The rmtree below deletes another
+    # run's pages out from under it, so two overlapping builds leave a half
+    # site and fail on a file that existed a second ago. That bit twice: a
+    # deploy aborted mid-upload, and a self-check read a page another run had
+    # just removed.
+    OUT.mkdir(parents=True, exist_ok=True)
+    lock = OUT / ".build.lock"
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+    except FileExistsError:
+        raise SystemExit(
+            f"ya hay un build corriendo sobre {OUT} (pid "
+            f"{lock.read_text(errors='replace').strip() or '?'}). "
+            f"Si no es cierto, borra {lock}.") from None
+    try:
+        return _build(t0)      # demo() counts pages with what _build returns
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _build(t0):
     # Ids upstream are not stable (vote ids are being re-keyed right now), so a
     # page whose slug changed would otherwise linger forever as a dead copy.
     # Only our own output is removed; anything else in site/ is left alone.
@@ -5140,10 +5181,10 @@ def main():
                  f'<span class="eyebrow">{num(len(bs))} proyectos</span>'
                  f'<h1>{esc(title)}</h1>'
                  + stage_mix(bs)
-                 + f'<p><a href="{key}.csv">Descargar estos {num(len(bs))} '
-                 f'proyectos en CSV</a> — el filtro completo, no solo la página '
-                 f'que está viendo: una fila por proyecto, con estado, etapa, '
-                 f'comisiones, número de firmas y el enlace a su ficha.</p>')
+                 + f'<p><a href="{key}.csv" title="Una fila por proyecto, con '
+                 f'estado, etapa, comisiones, número de firmas y el enlace a su '
+                 f'ficha.">Descargar estos {num(len(bs))} proyectos en CSV</a>. Es el '
+                 f'filtro completo, no solo esta página.</p>')
         for fn, htm in paginate(key, title, intro, bill_feed("../", bs), 1,
                                 prov_lines=src):
             write(OUT / "proyectos" / fn, htm)
@@ -5183,20 +5224,16 @@ def main():
 <dl class="tiles">
 <div class="tile"><dt>Con texto en línea</dt><dd>{num(tread)}
 <small>{"menos del 1 %" if 0 < 100 * tread / tot < 0.5 else f"{100 * tread / tot:.0f} %"}
-del registro · leídos del PDF oficial, con
-índice de artículos y buscador dentro del documento</small></dd></div>
+del registro · leídos del PDF oficial, con índice y buscador</small></dd></div>
 <div class="tile"><dt>Publicados como imagen</dt><dd>{num(timg)}
-<small>el Congreso los presentó escaneados o fotografiados: el PDF no tiene capa
-de texto y no hay nada que extraer</small></dd></div>
+<small>escaneados: el PDF no tiene capa de texto</small></dd></div>
 <div class="tile"><dt>Todavía sin descargar</dt><dd>{num(tpend)}
-<small>su PDF no ha pasado aún por nuestra ingesta; no significa que no tengan
+<small>su PDF no ha pasado por nuestra ingesta; no que no tengan
 texto</small></dd></div>
 </dl>
 <p class="sm mut" style="margin-top:12px">El Congreso no publica el articulado en
-HTML ni como dato: cada proyecto es un PDF en su servidor. Lo que ve aquí sale de
-extraer el texto de ese PDF, y el original manda ante cualquier diferencia. Los
-proyectos con texto disponible aparecen marcados «texto en línea» en los
-listados.</p></section>"""
+HTML ni como dato. Cada proyecto es un PDF, y ante cualquier diferencia manda el
+original. En los listados van marcados «texto en línea».</p></section>"""
 
     # Where the whole corpus actually sits. Ordinal, not categorical: the stages
     # are a sequence, so the colour runs with the track and not around a wheel.
@@ -5216,11 +5253,9 @@ listados.</p></section>"""
              + key_list([(scol[k], esc(slab[k]),
                           f'{num(dist[k])} · {pctxt(dist[k], stot)}')
                          for k in slab if dist.get(k)])
-             + f'<figcaption>Los {num(stot)} proyectos registrados, repartidos '
-               f'por la etapa del trámite en la que están hoy. Incluye el acervo '
-               f'del Congreso 2021-2026, que es lo que permite ver qué '
-               f'proporción llega realmente a ser ley.</figcaption></figure>'
-               '</section>')
+             + f'<figcaption>Los {num(stot)} proyectos registrados por etapa. '
+               f'Incluye el acervo 2021-2026, que es lo que permite ver qué '
+               f'proporción llega a ser ley.</figcaption></figure></section>')
     hub = f"""<span class="eyebrow">Proyectos de ley</span>
 <h1>{num(len(d["bills"]))} proyectos de ley</h1>
 <p class="lede">Todo lo que se ha presentado en el Congreso desde 2021, con su estado
@@ -5230,23 +5265,20 @@ oficial traducido a lenguaje llano y el trámite que le falta a cada uno.</p>
 <section><h2>Por cámara y periodo</h2>{facet_links("p2")}</section>
 <section><h2>Por estado publicado</h2>
 <p class="sm mut">Los {sum(1 for k in groups if k.startswith("estado-"))} estados
-que el Congreso publica, del más frecuente al más raro, con cuántos expedientes
-hay en cada uno. La barra es relativa al más numeroso; el color es el de la
-etapa a la que ese estado pertenece.</p>
+que publica el Congreso, del más frecuente al más raro. La barra es relativa al
+más numeroso.</p>
 {facet_bars("estado-", lambda k: scol[status_info(groups[k][1])[0]])}</section>
 <section><h2>Por año de presentación</h2>
 {facet_bars("anio-")}</section>
 <section><h2>Presentados más recientemente</h2>
 <ul class="feed">{"".join(bill_row("", b) for b in d["bills"][:40])}</ul></section>
 <section><h2>Descarga y cita</h2>
-<p><a href="proyectos.csv">Descargar los {num(len(d["bills"]))} proyectos en
-CSV</a> — el corpus entero: código, periodo, cámara, título, estado, etapa,
-fecha, proponente, comisiones, número de firmas, autor principal y el enlace a
-la ficha de cada uno.</p>
-<p class="sm mut">Cada filtro de esta página tiene además su propio CSV, con
-exactamente las filas de ese filtro: entre en cualquiera de los listados de
-arriba y el enlace está al inicio. Cita sugerida: «Registro de proyectos de ley
-del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
+<p><a href="proyectos.csv" title="Código, periodo, cámara, título, estado, etapa,
+fecha, proponente, comisiones, número de firmas, autor principal y enlace a la
+ficha.">Descargar los {num(len(d["bills"]))} proyectos en CSV</a>, el corpus
+entero. Cada filtro de arriba tiene además el suyo.</p>
+<p class="sm mut">Cita sugerida: «Registro de proyectos de ley del Congreso de la
+República del Perú», consultado el {fecha(today)}.</p>
 </section>
 {prov(src)}"""
     write(OUT / "proyectos.html", shell("Proyectos de ley", hub, 0))
@@ -5256,7 +5288,7 @@ del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
 
     # ---- committees: the roster (Senado only) and the bills sitting there.
     # Half the committees have one and half the other, so each half of the page
-    # is either rendered or explained — never left as an empty card.
+    # is either rendered or explained, never left as an empty card.
     for c in d["cttes"].values():
         bs = [d["bill_by_id"][b] for b in d["ctte_bills"].get(c["id"], [])
               if b in d["bill_by_id"]]
@@ -5267,13 +5299,11 @@ del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
                 "tiene en las manos. "
                 if any(not m["amendment"] for m in ms) else
                 f'Comisión {DE[c["chamber"] or "C"]}. ')
-        lede += ("Una comisión que no dictamina archiva de hecho: al terminar el "
-                 "periodo, lo que sigue aquí caduca."
+        lede += ("Una comisión que no dictamina archiva de hecho. Lo que siga aquí "
+                 "cuando cierre el periodo caduca."
                  if bs else
-                 "No tenemos ningún proyecto de ley derivado a esta comisión: "
-                 "las derivaciones que hemos cargado son las del Congreso "
-                 "2021-2026, y las de este periodo todavía no están en nuestra "
-                 "copia del registro de proyectos.")
+                 "No tenemos proyectos derivados a esta comisión: las derivaciones "
+                 "cargadas son las del Congreso 2021-2026.")
         intro = (f'<div class="crumb"><a href="../index.html">Inicio</a> › '
                  f'<a href="../comisiones.html">Comisiones</a> › '
                  f'{esc(CHAMBER[c["chamber"] or "C"])}</div>'
@@ -5282,11 +5312,9 @@ del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
                  f'<h1>{esc(c["name"])}</h1><p class="lede">{lede}</p>'
                  + roster(d, c))
         if not ms:
-            intro += ('<div class="note">No publicamos la composición de esta '
-                      'comisión. La única fuente que existe para un cuadro de '
-                      'comisión es el Diario de los Debates de la sesión que lo '
-                      'aprueba, y el que hemos parseado es el del Senado '
-                      '2026-2031.</div>')
+            intro += ('<div class="note">No publicamos su composición. La única fuente '
+                      'es el Diario de los Debates de la sesión que aprueba el '
+                      'cuadro, y solo tenemos el del Senado 2026-2031.</div>')
         plines = ctte_prov(d, c, today)
         if bs:
             intro += (f'<h2 style="margin-top:34px">Proyectos de ley en esta '
@@ -5304,7 +5332,7 @@ del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
     # ---- committee index. This is the page a reader lands on the moment they
     # tap Comisiones, and it was 35 identical grey rows. The one number that
     # differs between one comisión and the next is how many bills are parked in
-    # it — which is also the page's own thesis — so it is drawn, ordered and
+    # it, which is also the page's own thesis, so it is drawn, ordered and
     # grouped by chamber instead of being a word at the end of a meta line.
     cttes = sorted(d["cttes"].values(),
                    key=lambda c: (-(c["per_par"] or 0), c["chamber"] or "C",
@@ -5340,24 +5368,22 @@ del Congreso de la República del Perú», consultado el {fecha(today)}.</p>
     body = f"""<span class="eyebrow">Comisiones</span>
 <h1>{len(d["cttes"])} comisiones</h1>
 <p class="lede">La comisión es donde se decide casi todo: el 37 % de los proyectos
-de ley registrados está parado en una, y la que no dictamina archiva de hecho.
-De {withm} de ellas tenemos además el cuadro de miembros, con bancada y con la
-distinción entre titular y suplente.</p>
+está parado en una, y la que no dictamina archiva de hecho. De {withm} tenemos
+además el cuadro de miembros.</p>
 <div class="note">Ninguna cámara publica la composición de sus comisiones como
-dato. Los cuadros que ve aquí están leídos del Diario de los Debates del Senado;
-la Cámara de Diputados todavía no ha publicado el diario de la sesión en que
-aprobó los suyos, de modo que de sus comisiones solo existe el nombre.</div>
+dato. Estos cuadros salen del Diario de los Debates del Senado; la Cámara de
+Diputados aún no publica el suyo, así que de sus comisiones solo existe el
+nombre.</div>
 <div class="filters"><input id="q" type="search"
  placeholder="Filtrar por nombre, cámara o periodo" aria-label="Filtrar comisiones"></div>
 <ul class="ranked" id="ls">{"".join(crows)}</ul>
-<p class="sm mut" id="cnt">La barra es cuántos proyectos de ley están hoy en cada
-comisión, sobre la más cargada de todas. Es el dato que decide si una comisión
-puede dictaminar lo que tiene encima.</p>
+<p class="sm mut" id="cnt">La barra es cuántos proyectos tiene hoy cada comisión,
+sobre la más cargada.</p>
 {FILTER_JS}
 {prov([
     f'Nombres y asignación de proyectos: expedientes en <code>{API}</code>.',
     f'Composición: <a href="{DIARIO}PLO-2026-3-SENADO.pdf">Diario de los Debates '
-    f'del Senado ↗</a>, leído del PDF porque no existe en formato de datos.',
+    f'del Senado ↗</a>, leído del PDF.',
     f'Regenerado el {fecha(today)}.'])}"""
     write(OUT / "comisiones.html", shell("Comisiones", body, 0))
     n["listado"] += 1
@@ -5395,18 +5421,13 @@ puede dictaminar lo que tiene encima.</p>
         mem = [L for L in d["legs"] if L["chamber"] == ch and L["per_par"] >= 2026]
         if not mem:
             continue
-        chambers += f"""<figure class="hemifig" style="margin-bottom:34px">
+        chambers += f"""<figure class="hemifig" style="margin-bottom:34px"
+ title="{CURULES} Cada bancada tiene su color y su figura porque seis colores no
+se distinguen entre sí en las quince combinaciones posibles para quien no ve el
+color igual que usted.">
 <h3><span class="chip {ch.lower()}">{esc(CHAMBER[ch])}</span></h3>
 {hall_svg(mem, ch)}
-{bench_split(mem, lambda L: L["party"], "")}
-<figcaption>Un escaño por parlamentario, agrupados por bancada a lo largo del
-arco. Cada bancada tiene su color <b>y su figura</b> —círculo, cuadrado, rombo,
-triángulo, hexágono, anillo— porque seis colores no se distinguen entre sí en
-las quince combinaciones posibles cuando quien mira no ve el color igual que
-usted; la leyenda de abajo dibuja la misma figura que el asiento. Cada escaño
-enlaza a la ficha de quien lo ocupa y lleva su nombre; el orden dentro de la
-sala es el de este sitio, porque el Congreso no publica el plano real de
-curules.</figcaption></figure>"""
+{bench_split(mem, lambda L: L["party"], "")}</figure>"""
     # The roster is the page people actually come for, so it opens with the
     # search and is cut into bench sections with their own headings and
     # anchors: the previous version was 39 000 px of ungrouped cards with the
@@ -5436,27 +5457,24 @@ curules.</figcaption></figure>"""
                         + people_grid(nogroup, "", per_bench=True) + "</section>")
     body = f"""<span class="eyebrow">Padrón</span>
 <h1>Busque a su parlamentario</h1>
-<p class="lede">{dips} diputados y {sens} senadores del periodo 2026-2031{f", más {past} integrantes del Congreso unicameral 2021-2026 cuyas firmas siguen en el registro" if past else ""}.
-Cada ficha reúne lo que firmó, lo que votó, si asiste y cómo se compara con la
-mediana de su propia cámara.</p>
+<p class="lede">{dips} diputados y {sens} senadores del periodo 2026-2031{f", más {past} del Congreso unicameral 2021-2026 cuyas firmas siguen en el registro" if past else ""}.
+Cada ficha reúne lo que firmó, lo que votó y si asiste.</p>
 <div class="stick">
 <div class="filters"><input id="q" type="search"
  placeholder="Escriba un nombre, una región o una bancada"
  aria-label="Filtrar el padrón"></div>
 <div class="rail">{"".join(rail)}</div></div>
 <ul class="feed" id="ls">{rows}</ul>
-<p class="sm mut" id="cnt">{len(d["legs"])} parlamentarios. Escriba arriba para
-filtrar esta lista, o baje a la bancada que le interese.</p>
+<p class="sm mut" id="cnt">{len(d["legs"])} parlamentarios.</p>
 {FILTER_JS}
 <div id="browse">
 <section><h2>Las dos cámaras, escaño por escaño</h2>{chambers}</section>
 <section><h2>Los {dips + sens} en ejercicio, por bancada</h2>
-<p class="sm mut">Ordenados por bancada y, dentro de ella, alfabéticamente por
-apellido. La franja de color bajo cada retrato es la de su grupo, la misma en
-todo el sitio.</p>{"".join(sections)}</section></div>
+<p class="sm mut">Por bancada y, dentro de ella, por apellido.</p>
+{"".join(sections)}</section></div>
 <script>
 /* Los 190 en ejercicio salían dos veces: una en la lista plana de búsqueda y
-   otra, con retrato, en su bancada — 40 000 px de página y a quien buscaba un
+   otra, con retrato, en su bancada. 40 000 px de página, y a quien buscaba un
    nombre le quedaban 13 000 px de lista alrededor de su único resultado. Con
    JS, la lista plana es la vista de resultados y solo aparece al escribir; sin
    JS quedan las dos, que es lo que ve un rastreador. */
@@ -5469,8 +5487,7 @@ q.addEventListener("input",sync);sync();}})()
     '<a href="https://diputados.congreso.gob.pe/">Cámara de Diputados ↗</a> y del '
     '<a href="https://senado.congreso.gob.pe/">Senado ↗</a>, vía su API REST. '
     'Los retratos son copias reducidas alojadas aquí, no enlaces al servidor de '
-    'las cámaras: así no dependemos de que no cambien de ruta, y la página no '
-    'descarga 37 MB para dibujar miniaturas.',
+    'las cámaras.',
     f'Logotipos de bancada: Wikimedia Commons, '
     f'<a href="{LOGO_CREDIT}">autoría y licencia de cada uno</a>.',
     f'Regenerado el {fecha(today)}.'])}"""
@@ -5480,7 +5497,7 @@ q.addEventListener("input",sync);sync();}})()
     # ---- motions index. 107 rows, and 107 of them carried the same chip:
     # «PARA SER VISTA POR LA JUNTA DE PORTAVOCES», repeated with zero variance
     # down 41 473 px. What actually differs between one moción and the next is
-    # what kind of instrument it is — 87 of the 107 are greetings — so that is
+    # what kind of instrument it is, and 87 of the 107 are greetings, so that is
     # what groups the page and what the rail is coloured by. Said once above.
     fams, seen_st = {}, {m["status"] or "—" for m in d["motions"]}
     for m in d["motions"]:
@@ -5501,10 +5518,8 @@ q.addEventListener("input",sync);sync();}})()
         small = fam == "saludo"
         mrows.append(f'<li class="gh">{esc(label)}<b>{num(len(ms))}</b></li>')
         if small:
-            mrows.append('<li class="ghn sm mut" style="padding:0 0 8px">Fila '
-                         'compacta: son fórmulas de cortesía y no obligan a '
-                         'nada. Cada una enlaza a sus firmantes desde la ficha '
-                         'de quien la presentó.</li>')
+            mrows.append('<li class="ghn sm mut" style="padding:0 0 8px">Fórmulas '
+                         'de cortesía: no obligan a nada.</li>')
         for m in ms:
             sg = d["signers"].get(m["id"], [])
             # Con cara. «Qué diputado la declaró» es la pregunta que trae a
@@ -5534,21 +5549,19 @@ q.addEventListener("input",sync);sync();}})()
             + key_list([(MOC_COL[f], esc(MOC_FAMILY[f][0]),
                          f'{len(fams[f])} · {pctxt(len(fams[f]), len(d["motions"]))}')
                         for f in MOC_ORDER if fams.get(f)])
-            + '<figcaption>De qué tipo son las mociones presentadas. Las de saludo '
-              'no obligan a nadie a nada; las de investigación, interpelación e '
-              'invitación son control político. Abajo van en ese orden, no en el '
-              'de llegada.</figcaption></figure>') if d["motions"] else ""
-    onest = (f'<p class="sm mut">Las {len(d["motions"])} están en el mismo '
-             f'estado, «{esc(list(seen_st)[0])}»: la Junta de Portavoces decide '
-             f'cuáles se ven en el Pleno y en qué orden. Lo decimos aquí una vez '
-             f'en lugar de {len(d["motions"])} veces más abajo.</p>'
+            + '<figcaption>De qué tipo son. Las de saludo no obligan a nada; las '
+              'de investigación, interpelación e invitación son control político. '
+              'Abajo van en ese orden, no en el de llegada.'
+              '</figcaption></figure>') if d["motions"] else ""
+    onest = (f'<p class="sm mut">Las {len(d["motions"])} están en «'
+             f'{esc(list(seen_st)[0])}»: la Junta de Portavoces decide cuáles se '
+             f'ven en el Pleno y en qué orden.</p>'
              if len(seen_st) == 1 and d["motions"] else "")
     body = f"""<span class="eyebrow">Mociones de orden del día</span>
 <h1>{len(d["motions"])} mociones</h1>
-<p class="lede">La moción es el instrumento con el que el Congreso se pronuncia sin
-legislar: saludos, pedidos de interpelación, conformación de comisiones
-investigadoras. En los primeros días de este Congreso hay más mociones que
-proyectos de ley, así que es aquí donde se ve la actividad real.</p>
+<p class="lede">El instrumento con el que el Congreso se pronuncia sin legislar:
+saludos, pedidos de interpelación, comisiones investigadoras. En estos primeros
+días hay más mociones que proyectos de ley.</p>
 {mmix}
 {onest}
 <div class="filters"><input id="q" type="search"
@@ -5564,23 +5577,17 @@ proyectos de ley, así que es aquí donde se ve la actividad real.</p>
 
     # ---- votes index
     if d["votes"]:
-        vrows = "".join(
-            f'<li><span class="m">{esc(CHAMBER_SHORT[v["chamber"]])} · '
-            f'{fecha(v["held_on"])} · {esc(v["result"] or "")}</span>'
-            f'<a class="t" href="votacion/{v['slug']}.html">'
-            f'{esc(v["subject"] or v["id"])}</a></li>' for v in d["votes"])
+        vrows = "".join(vote_feed_row(d, v) for v in d["votes"])
         extra = ""
     else:
         vrows = ""
-        extra = ('<div class="note">Todavía no hay ninguna votación nominal '
-                 'procesada. El Congreso 2026-2031 publica las actas en PDF unos '
-                 'días después de cada sesión; en cuanto haya una con listado '
-                 'nominal aparecerá aquí, con el detalle de cómo votó cada '
-                 'parlamentario y su descarga en CSV.</div>')
+        extra = ('<div class="note">Todavía no hay votaciones nominales '
+                 'procesadas: las actas se publican en PDF unos días después de '
+                 'cada sesión.</div>')
     body = f"""<span class="eyebrow">Votaciones nominales</span>
 <h1>{len(d["votes"])} votaciones</h1>
 <p class="lede">Cada votación nominal publicada, con el resultado por bancada,
-quiénes rompieron con su grupo y la lista completa descargable.</p>{extra}
+quiénes rompieron con su grupo y la lista descargable.</p>{extra}
 <ul class="feed" id="ls">{vrows}</ul>
 {prov(['Actas de votación publicadas por la Cámara de Diputados y el Senado.',
        f'Regenerado el {fecha(today)}.'])}"""
@@ -5685,21 +5692,18 @@ cámara, ni a ninguna bancada, ni gestionamos trámite alguno.</p>
 <section><h2>Quién lo hace</h2>
 <p>Lo construye y mantiene <b>axvg</b>, a título personal, sin financiamiento ni
 vínculo con el Congreso, con partidos ni con medios. El código que descarga los
-datos y genera cada una de estas páginas es público:
-<a href="{REPO}">{REPO}</a>. Cualquiera puede correrlo y obtener este mismo
-sitio a partir de las mismas fuentes; esa es la única garantía que podemos
-ofrecer de que no hay una mano editorial en medio.</p></section>
+datos y genera estas páginas es público: <a href="{REPO}">{REPO}</a>. Cualquiera
+puede correrlo y obtener este mismo sitio de las mismas fuentes.</p></section>
 
 <section><h2>De dónde sale cada dato</h2>
 <dl class="kv">
 <div><dt>Proyectos de ley</dt><dd>Registro oficial del Congreso,
 <code>{API}/proyecto-ley</code>, y el expediente de cada proyecto en el portal
-SPLey. De ahí salen el título, la sumilla, el estado, la fecha, las firmas, el
-historial de movimientos y las comisiones asignadas.</dd></div>
+SPLey: título, sumilla, estado, fecha, firmas, historial y comisiones.</dd></div>
 <div><dt>Estado traducido a lenguaje llano</dt><dd>Lo agregamos nosotros. El
 Congreso publica un código («EN COMISIÓN»); la frase que lo explica y los pasos
-que faltan los escribimos aquí, a partir del Reglamento del Congreso. Es la
-única parte redactada del sitio y por eso se distingue del dato.</dd></div>
+que faltan salen del Reglamento del Congreso. Es la única parte redactada del
+sitio.</dd></div>
 <div><dt>Parlamentarios</dt><dd>Portales de la
 <a href="https://diputados.congreso.gob.pe/">Cámara de Diputados</a> y del
 <a href="https://senado.congreso.gob.pe/">Senado</a>, vía su API REST. Del
@@ -5709,10 +5713,10 @@ proyectos: por eso esas fichas no tienen bancada ni foto.</dd></div>
 expediente, convertido a texto con <code>pdftotext</code>. Hoy
 {"se puede leer" if tread == 1 else "se pueden leer"}
 aquí <b>{num(tread)}</b> de {num(len(d["bills"]))} proyectos;
-<b>{num(timg)}</b> fueron presentados como imagen escaneada y no tienen texto que
-extraer, y <b>{num(tpend)}</b> aún no han pasado por la descarga.
-<a href="proyectos.html#texto">El detalle está en el índice de proyectos</a>. El
-original manda: ante cualquier diferencia, vale el PDF.</dd></div>
+<b>{num(timg)}</b> son imagen escaneada, sin texto que extraer, y
+<b>{num(tpend)}</b> aún no pasan por la descarga.
+<a href="proyectos.html#texto">El detalle, en el índice de proyectos</a>. Ante
+cualquier diferencia manda el PDF.</dd></div>
 <div><dt>Mociones</dt><dd>Registro de mociones,
 <code>smociones-portal-service</code>.</dd></div>
 <div><dt>Votaciones nominales</dt><dd>Las actas en PDF que cada cámara publica
@@ -5732,67 +5736,67 @@ adivinar.</dd></div>
 
 <section><h2>Lo que es provisional, dicho como tal</h2>
 <p>Parte del material de votación viene sellado por la propia cámara como
-<b>INFORMACIÓN PROVISIONAL · SIN LOS VOTOS ORALES</b>: el tablero electrónico no
-recoge los votos que se emiten de viva voz, y el conteo definitivo se lee en
-sala y se publica después en el Diario de los Debates.
-{f"Hoy {prov_votes} de las {len(d['votes'])} votaciones publicadas en este sitio provienen de un acta con ese sello, y {prov_att} de las listas de asistencia llevan la misma marca." if prov_votes or prov_att else ""}
-Donde la fuente se declara provisional, la página lo dice, muestra las cifras en
-conflicto una al lado de otra y nombra cuál está usando. Ninguna cifra
-provisional se presenta como definitiva.</p>
-<p>La misma regla vale para las personas: <b>una licencia no es una
-inasistencia</b> y <b>quien preside la sesión no está faltando</b>. Ninguna de
-las dos entra jamás en el denominador de un porcentaje de asistencia, y no
-publicamos un porcentaje sobre menos de cinco oportunidades: decimos el conteo
-y por qué no damos la tasa.</p></section>
+<b>INFORMACIÓN PROVISIONAL · SIN LOS VOTOS ORALES</b>: el tablero no recoge los
+votos de viva voz, y el conteo definitivo se publica después en el Diario de los
+Debates.
+{f"Hoy {prov_votes} de las {len(d['votes'])} votaciones y {prov_att} de las listas de asistencia llevan ese sello." if prov_votes or prov_att else ""}
+Donde la fuente es provisional, la página lo dice, muestra las cifras en
+conflicto y nombra cuál usa. Ninguna se presenta como definitiva.</p>
+<p>Lo mismo con las personas: <b>una licencia no es una inasistencia</b> y
+<b>quien preside no está faltando</b>. Ninguna entra en el denominador de un
+porcentaje de asistencia, y no publicamos porcentajes sobre menos de cinco
+oportunidades: damos el conteo y decimos por qué.</p>
+<p><b>El plano del hemiciclo lo inventamos nosotros.</b> {CURULES} Lo que sí es
+del registro es quién ocupa cada escaño: los diagramas agrupan a cada bancada en
+un tramo contiguo del arco y ordenan alfabéticamente dentro de ella. Dos escaños
+vecinos en esta web no son dos escaños vecinos en el Palacio
+Legislativo.</p></section>
 
 <section id="logos"><h2>Logotipos de las bancadas</h2>
-<p>Cada bancada aparece en este sitio con su logotipo, un color y su nombre, los
-tres juntos, para que una lista de 130 personas se pueda recorrer de un vistazo.
-<b>El color lo asignamos nosotros</b> y no es el del partido: seis colores de
-partido no se distinguen entre sí para un lector con daltonismo, así que los
-tomamos de una paleta comprobada. <b>El logotipo sí es del partido.</b> Los
-usamos para identificar a cada grupo —el mismo uso que hace la prensa—, nunca
-como adorno y nunca de un modo que sugiera que el partido respalda este sitio.
+<p>Cada bancada aparece con su logotipo, un color y su nombre. <b>El color lo
+asignamos nosotros</b> y no es el del partido. Seis colores de partido no se
+distinguen entre sí para un lector con daltonismo, así que salen de una paleta
+comprobada. <b>El logotipo sí es del partido.</b> Lo usamos para identificar al
+grupo, igual que la prensa, y nunca para sugerir que el partido respalde este
+sitio.</p>
 {LOGOS_TABLE}
 <p class="sm mut">Si usted representa a alguna de estas organizaciones y quiere
 que retiremos o reemplacemos su logotipo, escríbanos en
 <a href="{REPO}/issues">{REPO}/issues</a> y lo hacemos.</p></section>
 
 <section><h2>Pedir una corrección</h2>
-<p>Si algo sobre usted o sobre alguien más está mal —un nombre mal cruzado, un
-voto que no es el suyo, una inasistencia que era una licencia— <b>pídanos la
+<p>Un nombre mal cruzado, un voto que no es el suyo, una inasistencia que era
+una licencia: si algo sobre usted o sobre alguien más está mal, <b>pídanos la
 corrección y la haremos</b>. Abra un caso en
 <a href="{REPO}/issues">{REPO}/issues</a> indicando la página, el dato que está
 mal y, si puede, el documento oficial que lo demuestra.</p>
-<p>Dos cosas que conviene saber de antemano. Primero: si el error está en la
-fuente del Congreso, lo corregimos igual, pero anotando qué dice el documento
-original, porque este sitio tiene que poder contrastarse contra él. Segundo: no
-borramos hechos publicados por el Congreso a pedido de quien aparece en ellos;
-un voto registrado es un acto público.</p></section>
+<p>Dos advertencias. Si el error está en la fuente del Congreso lo corregimos
+igual, pero anotando qué dice el documento original. Y no borramos hechos
+publicados por el Congreso a pedido de quien aparece en ellos: un voto registrado
+es un acto público.</p></section>
 
 <section><h2>Licencia y reuso</h2>
 <p>Los datos originales son actos públicos del Congreso de la República del
-Perú y su reuso es libre. Lo que agregamos nosotros —la traducción de los
-estados, los cruces, las tasas calculadas y estas páginas— se ofrece bajo
+Perú y su reuso es libre. Lo que agregamos nosotros, o sea la traducción de los
+estados, los cruces, las tasas calculadas y estas páginas, se ofrece bajo
 <a href="https://creativecommons.org/licenses/by/4.0/deed.es">Creative Commons
 Atribución 4.0</a>: úselo para lo que quiera, incluso comercialmente, citando
 la fuente y enlazando a la página de la que lo tomó.</p>
-<p>Para reusar en volumen hay descargas en CSV: la
-<a href="proyectos.html">lista de proyectos</a> y cada uno de sus filtros, cada
+<p>Para reusar en volumen hay CSV: la <a href="proyectos.html">lista de
+proyectos</a> y cada uno de sus filtros, cada
 <a href="votaciones.html">votación nominal</a> y la ficha de cada
-<a href="parlamentarios.html">parlamentario</a>. Preferimos que use el CSV a
-que raspe el HTML; si necesita un corte que no existe, pídalo en el
-repositorio.</p></section>
+<a href="parlamentarios.html">parlamentario</a>. Si necesita un corte que no
+existe, pídalo en el repositorio.</p></section>
 
 <section><h2>Por qué todavía no queremos aparecer en buscadores</h2>
-<p>Cada página de este sitio lleva <code>noindex</code> y el
+<p>Cada página lleva <code>noindex</code> y el
 <a href="robots.txt">robots.txt</a> desautoriza a los rastreadores. Es
 deliberado: el sitio es público para poder ser revisado, no para ser el primer
 resultado sobre una persona con nombre y apellido antes de que cada cruce esté
 verificado. Se quitará cuando lo esté.</p></section>
 {prov([
-    'Este sitio se regenera entero en cada corrida de la ingesta: no hay base '
-    'de datos en producción ni edición manual de páginas.',
+    'Se regenera entero en cada corrida de la ingesta: no hay base de datos en '
+    'producción ni edición manual de páginas.',
     f'Última regeneración: {fecha(today)}. '
     f'{num(len(d["bills"]))} proyectos, {len(d["legs"])} parlamentarios, '
     f'{len(d["votes"])} votaciones y {len(d["sesiones"])} tomas de asistencia.',
@@ -5801,6 +5805,115 @@ verificado. Se quitará cuando lo esté.</p></section>
     return shell("Acerca de este sitio", body, 0,
                  desc="Quién hace Hemiciclo, de dónde sale cada dato, cómo pedir "
                       "una corrección y bajo qué licencia se puede reusar.")
+
+
+def bench_rankings(d, r=""):
+    """Las bancadas ordenadas por lo que hacen: cuánto presentan, cuánto firman,
+    cuánto faltan y cuántas veces quedan del lado que gana.
+
+    Nada se calcula dos veces. Los proyectos y las mociones salen de los mismos
+    índices de firmas que usa la página de cada bancada, la asistencia del mismo
+    `leg_att_rate` que la ficha de cada parlamentario, y «votó con la mayoría»
+    de `gp_agree`, que `load()` cuenta una vez por votación. Una tabla que
+    contradiga a la página de la bancada no puede aparecer aquí.
+
+    Y cada lista dice sobre qué divide. Con cinco votaciones nominales y trece
+    tomas de asistencia, un porcentaje suelto sería ruido con forma de dato:
+    `pct_or_note` decide si lo hay, y la cifra pequeña de cada fila lleva el
+    denominador pegado.
+    """
+    benches = [p for p in BENCH_ORDER
+               if any(L["party"] == p and L["per_par"] >= 2026 for L in d["legs"])]
+    if not benches:
+        return ""
+    mem = {p: sum(1 for L in d["legs"]
+                  if L["party"] == p and L["per_par"] >= 2026) for p in benches}
+
+    def signed(items, index):
+        """Cuántas piezas lleva al menos una firma de cada bancada. Una pieza
+        firmada por dos bancadas cuenta en las dos: es lo que la pregunta
+        «quién presenta más» quiere saber, y por eso los totales no suman."""
+        c = dict.fromkeys(benches, 0)
+        for it in items:
+            for p in {s["leg"]["party"] for s in index.get(it["id"], []) if s["leg"]}:
+                if p in c:
+                    c[p] += 1
+        return c
+
+    bills = signed([b for b in d["bills"] if b["per_par"] >= 2026], d["spon"])
+    mots = signed(d["motions"], d["signers"])
+    falta = dict.fromkeys(benches, 0)
+    opor = dict.fromkeys(benches, 0)
+    for L in d["legs"]:
+        if L["party"] not in benches or L["per_par"] < 2026:
+            continue
+        ok, b, _lic, _pre = leg_att_rate(d, L)
+        falta[L["party"]] += b - ok
+        opor[L["party"]] += b
+    agree = dict.fromkeys(benches, (0, 0))
+    for (_ch, p), (a, t) in d["gp_agree"].items():
+        if p in benches:
+            x, y = agree[p]
+            agree[p] = (x + a, y + t)
+
+    def lst(title, rows, note):
+        """rows: [(bancada, valor para la barra, cifra, denominador)], ya ordenada."""
+        top = max((v for _p, v, _n, _s in rows), default=0) or 1
+        return (f'<div class="card"><h3>{esc(title)}</h3>'
+                '<ul class="ranked" style="margin-top:12px">' + "".join(
+                    f'<li><a href="{bench_url(r, p)}">'
+                    f'<span class="lbl bl">{bench_logo(p, r, 22)}'
+                    f'<span>{esc(p)}</span></span>'
+                    f'<span class="track"><i style="width:'
+                    f'{max(100 * v / top, 1.2):.1f}%;'
+                    f'background:var(--gp{bench_slot(p)})"></i></span>'
+                    f'<span class="n">{esc(big)}</span>'
+                    f'<span class="pc">{esc(small)}</span></a></li>'
+                    for p, v, big, small in rows)
+                + f'</ul><p class="sm mut" style="margin-top:10px">{note}</p></div>')
+
+    def rate(n, base, unit):
+        """«38 % de 260», o el conteo desnudo cuando el denominador es un puñado."""
+        txt, is_pct = pct_or_note(n, base, unit)
+        return f"{txt} de {num(base)}" if is_pct else f"sobre {num(base)}"
+
+    ntot = sum(mem.values())
+    out = [
+        lst("Quién presenta más proyectos",
+            sorted(((p, bills[p], num(bills[p]),
+                     f"{bills[p] / mem[p]:.1f} por escaño") for p in benches),
+                   key=lambda x: -x[1]),
+            f"Proyectos del periodo 2026-2031 con al menos una firma del grupo. "
+            f"Un proyecto firmado por dos bancadas cuenta en las dos, así que la "
+            f"columna no suma {num(sum(bills.values()))}."),
+        lst("Quién firma más mociones",
+            sorted(((p, mots[p], num(mots[p]),
+                     f"de {num(len(d['motions']))}") for p in benches),
+                   key=lambda x: -x[1]),
+            f"De las {num(len(d['motions']))} mociones presentadas, en cuántas "
+            f"firma al menos un integrante del grupo."),
+        lst("Quién falta más",
+            sorted(((p, falta[p] / max(opor[p], 1), num(falta[p]),
+                     rate(falta[p], opor[p], "oportunidades")) for p in benches),
+                   key=lambda x: -x[1]),
+            f"Inasistencias contadas persona por persona sobre las "
+            f"{len(d['sesiones'])} tomas de asistencia publicadas: una licencia "
+            f"y quien presidió la sesión no son oportunidades de faltar y no "
+            f"entran en el denominador. La barra ordena por proporción, no por "
+            f"tamaño del grupo."),
+        lst("Quién vota con la mayoría",
+            sorted(((p, agree[p][0] / max(agree[p][1], 1), num(agree[p][0]),
+                     rate(agree[p][0], agree[p][1], "votaciones"))
+                    for p in benches), key=lambda x: -x[1]),
+            f"Votaciones nominales en que la posición mayoritaria del grupo fue "
+            f"la que ganó. Solo hay {len(d['votes'])} actas procesadas: esto es "
+            f"un conteo, todavía no una tendencia."),
+    ]
+    return (f'<section><h2>Las {len(benches)} bancadas, comparadas</h2>'
+            f'<div class="grid g2">{"".join(out)}</div>'
+            f'<p class="sm mut" style="margin-top:14px">{ntot} escaños en '
+            f'{len(benches)} bancadas. Cada lista ordena por su propia medida y '
+            f'lleva su denominador al lado.</p></section>')
 
 
 def render_home(d, base, today):
@@ -5818,7 +5931,7 @@ def render_home(d, base, today):
     rate = len(cur) / days if days else 0
     old_rate = len(old) / old_days
 
-    # The hero: both chambers as the thing they are — a half circle of seats.
+    # The hero: both chambers as the thing they are, a half circle of seats.
     # Nothing else on this site says "Congress" as fast as this does.
     halls, cols = [], []
     for ch in ("D", "S"):
@@ -5867,11 +5980,10 @@ def render_home(d, base, today):
         flow = f"""<section><h2>Cuántos proyectos entran cada mes</h2>
 <figure>{col_chart(pts, "proyectos", 170, "flow", "var(--accent)", partial=part)}
 <figcaption>Un mes por columna, de {fecha(ms[0] + "-01")[len("1 de "):]} a
-{fecha(ms[-1] + "-01")[len("1 de "):]}, sobre los {num(len(d["bills"]))}
-proyectos con fecha de presentación registrada. El pico es
-{MES[int(top_k[5:]) - 1]} de {top_k[:4]}, con {num(per_month[top_k])}. Se marcan
-enero y julio de cada año, que es cuando abren las legislaturas.
-{"La última columna va punteada porque el mes no ha terminado: son " + str(lastd) + " días, no treinta." if part else ""}
+{fecha(ms[-1] + "-01")[len("1 de "):]}. El pico es {MES[int(top_k[5:]) - 1]} de
+{top_k[:4]}, con {num(per_month[top_k])}. Se marcan enero y julio, cuando abren
+las legislaturas.
+{"La última columna va punteada: el mes lleva " + str(lastd) + " días." if part else ""}
 </figcaption></figure></section>"""
 
     # stage distribution of the whole corpus
@@ -5892,17 +6004,21 @@ enero y julio de cada año, que es cuando abren las legislaturas.
 
     votes_block = ""
     if d["votes"]:
-        votes_block = ("<section><h2>Últimas votaciones nominales</h2><ul class='feed'>"
-                       + "".join(
-                           f'<li><span class="m">{esc(CHAMBER_SHORT[v["chamber"]])} · '
-                           f'{fecha(v["held_on"])} · {esc(v["result"] or "")}</span>'
-                           f'<a class="t" href="votacion/{v['slug']}.html">'
-                           f'{esc(v["subject"] or v["id"])}</a></li>'
-                           for v in d["votes"][:6]) + "</ul></section>")
+        votes_block = ("<section><h2>Últimas votaciones nominales</h2>"
+                       "<ul class='feed'>"
+                       + "".join(vote_feed_row(d, v) for v in d["votes"][:6])
+                       + "</ul></section>")
 
     # «Empezar por aquí»: los mismos tres grupos que el índice de la barra, con
     # el tamaño real de cada destino al lado. Sale de NAV, así que no puede
     # discrepar de la navegación ni quedarse con un destino menos.
+    #
+    # Sin la glosa de cada destino. Eran ocho descripciones de dos líneas, 120
+    # palabras para decir qué secciones hay, y la cifra ya lo dice: «Proyectos
+    # de ley 14 908» no necesita que le expliquen qué es, y «Bancadas 6 · las
+    # seis, con su tamaño…» se repetía su propio número en letra. El texto largo
+    # sigue existiendo donde sirve: en el <details> de la barra, que a ancho de
+    # teléfono es lo único que hay.
     sizes = {"proyectos.html": num(len(d["bills"])),
              "mociones.html": num(len(d["motions"])),
              "parlamentarios.html": num(len(d["legs"])),
@@ -5914,11 +6030,11 @@ enero y julio de cada año, que es cuando abren las legislaturas.
         f'<div class="card"><span class="eyebrow">{esc(label)}</span>'
         f'<ul class="toc" style="margin-top:6px">'
         + "".join(f'<li><a href="{u}"><b>{esc(t)}</b> '
-                  f'<span class="mut sm">{sizes.get(u, "")}</span><br>'
-                  f'<span class="mut sm">{esc(dsc)}</span></a></li>'
-                  for u, t, dsc in dests)
+                  f'<span class="mut sm">{sizes.get(u, "")}</span></a></li>'
+                  for u, t, _dsc in dests)
         + "</ul></div>" for label, dests in NAV)
 
+    nominal = sum(1 for v in d["votes"] if d["vrows"].get(v["id"]))
     last = max((b["presented_on"] or "") for b in d["bills"]) if d["bills"] else today
     body = f"""<span class="eyebrow">Congreso de la República del Perú · 2026-2031</span>
 <h1>Qué está haciendo el Congreso ahora mismo</h1>
@@ -5928,18 +6044,11 @@ registrado: <b>{fecha(last)}</b>.</p>
 
 <section><h2>Los 190 escaños, uno por uno</h2>
 <div class="halls">{"".join(halls)}</div>
-<p class="sm mut" style="margin-top:16px">Un escaño por parlamentario,
-agrupados por bancada a lo largo del arco: cada bancada tiene su color y su
-figura, y la leyenda dibuja la misma figura que el asiento. Cada escaño lleva el
-nombre de quien lo ocupa y enlaza a su ficha;
-<a href="bancadas.html">las seis bancadas, una por una</a>. El orden dentro de
-la sala es el de este sitio: el Congreso no publica el plano de curules.</p></section>
+<p class="sm mut" style="margin-top:16px"><a href="bancadas.html">Las seis
+bancadas, una por una</a>.</p></section>
 
-<section><h2>Empezar por aquí</h2>
-<p class="sm mut" style="margin-bottom:16px">Todo el sitio cuelga de tres
-preguntas. Es la misma agrupación que abre el botón «Secciones» de arriba, para
-que la barra y la página digan lo mismo.</p>
-<div class="grid g3">{start_here}</div></section>
+{bench_rankings(d)}
+
 <section><h2>Actividad del Congreso actual</h2>
 <dl class="tiles">
 <div class="tile"><dt>Proyectos presentados</dt><dd>{len(cur)}
@@ -5948,14 +6057,15 @@ que la barra y la página digan lo mismo.</p>
 <small>{len(d["motions"]) / max(days, 1):.1f} por día</small></dd></div>
 <div class="tile"><dt>Firmas de parlamentarios</dt>
 <dd>{sum(len(d["spon"].get(b["id"], [])) for b in cur)}
-<small>en los {len(cur)} proyectos de este periodo</small></dd></div>
+<small>en {len(cur)} proyectos</small></dd></div>
 <div class="tile"><dt>Votaciones nominales</dt><dd>{len(d["votes"])}
-<small>actas con listado nominal procesadas</small></dd></div>
+<small>{nominal} con lista nominal</small></dd></div>
 </dl>
-<p class="sm mut" style="margin-top:14px">Para comparar: el Congreso 2021-2026
-presentó {num(len(old))} proyectos en {old_days} días, es decir {old_rate:.1f} por
-día. Este Congreso va a {"un ritmo mayor" if rate > old_rate else "un ritmo menor"}
-que aquel.</p></section>
+<p class="sm mut" style="margin-top:14px">El anterior Congreso presentó
+{old_rate:.1f} proyectos por día; este va a {rate:.1f}.</p></section>
+
+<section><h2>Empezar por aquí</h2>
+<div class="grid g3">{start_here}</div></section>
 
 <section><h2>Lo último de cada cámara</h2><div class="grid g2">{"".join(cols)}</div></section>
 {votes_block}
@@ -5963,9 +6073,9 @@ que aquel.</p></section>
 
 <section><h2>Dónde están los {num(len(d["bills"]))} proyectos registrados</h2>
 {bar}
-<p class="sm mut" style="margin-top:12px">Incluye el acervo del Congreso
-unicameral 2021-2026, que es el que permite ver cuántos proyectos llegan
-realmente a ser ley. <a href="proyectos.html">Explorar por etapa</a>.</p></section>
+<p class="sm mut" style="margin-top:12px">Incluye el acervo 2021-2026, que es el
+que permite ver cuántos llegan a ser ley.
+<a href="proyectos.html">Explorar por etapa</a>.</p></section>
 
 <section><h2>Otros cortes del registro</h2><div class="facets">
 <a href="mociones.html">Mociones <b>{len(d["motions"])}</b></a>
@@ -5980,11 +6090,10 @@ realmente a ser ley. <a href="proyectos.html">Explorar por etapa</a>.</p></secti
     '(<code>smociones-portal-service</code>) y los portales de la '
     '<a href="https://diputados.congreso.gob.pe/">Cámara de Diputados ↗</a> y el '
     '<a href="https://senado.congreso.gob.pe/">Senado ↗</a>.',
-    'No editorializamos: el estado de cada proyecto es el que publica el '
-    'Congreso; lo único que agregamos es la traducción de ese estado a lenguaje '
-    'llano y el cruce por nombre entre padrón y firmas.',
-    f'Sitio regenerado el {fecha(today)}; el dato más reciente que contiene es '
-    f'del {fecha(last)}.',
+    'Lo único que agregamos es la traducción del estado a lenguaje llano y el '
+    'cruce por nombre entre padrón y firmas.',
+    f'Sitio regenerado el {fecha(today)}; el dato más reciente es del '
+    f'{fecha(last)}.',
 ])}"""
     return shell("Hemiciclo · Congreso del Perú 2026-2031", body, 0,
                  desc="Registro público del Congreso bicameral del Perú: proyectos "
@@ -6245,7 +6354,7 @@ def demo():
     rt = d2["rates"]["stage"]["COM"]
     assert num(rt["n"]) in blk and num(rt["ley"]) in blk and num(rt["dictamen"]) in blk, \
         "the base rate on the bill page is not the computed one"
-    # a share, stated as a share — «menos del 1 %» counts, «0%» never did
+    # a share, stated as a share. «menos del 1 %» counts, «0%» never did
     assert re.search(r"\d+(?:\.\d)? %|menos del 1 %", blk), \
         "no percentage on the base-rate block"
     assert "(0%)" not in blk and "(0 %)" not in blk, \
@@ -6338,7 +6447,7 @@ def demo():
         h = re.search(r"<h1[^>]*>(.*?)</h1>", t, re.S)
         heads[p] = h.group(1) if h else ""
         # Nothing this site paints may come from another host. 190 portraits
-        # were hotlinked at full resolution — 37.7 MB to fill 38 px thumbnails,
+        # were hotlinked at full resolution, 37.7 MB to fill 38 px thumbnails,
         # and one upstream rename from a site with no faces on it.
         assert not re.search(r'<img[^>]+src="https?:', t), \
             f"{p}: an <img> still points at another host"
@@ -6369,11 +6478,20 @@ def demo():
     # ---- el hemiciclo. The seat plan is the one picture this subject has, and
     # it is only worth anything if it is in the markup: exactly one seat per
     # member, every seat an anchor to a real ficha, no JavaScript involved.
+    def seat_block(text, ident):
+        """The whole figure: the <svg> and the hover layer that sits on it. The
+        link to a member's ficha moved out of the SVG and into that layer when
+        the seat got a hover card, so an assertion that stops at </svg> counts
+        the shapes and none of the links."""
+        return text.split(f'id="{ident}"')[1].split("</div>")[0]
+
     def seats_in(text, ident):
         """A seat is a circle, a diamond, a square or a triangle now, so this
         counts the class every one of them carries, not one element name."""
-        blk = text.split(f'id="{ident}"')[1].split("</svg>")[0]
-        return blk.count('class="seat'), blk.count('<a href="')
+        blk = seat_block(text, ident)
+        # `class="seat ` with the space: the hover layer's own wrapper is
+        # `class="seatlayer"` and counted as a 131st seat without it.
+        return blk.count('class="seat '), blk.count('<a class="sl" href="')
 
     home = (OUT / "index.html").read_text()
     for ch, want in (("D", 130), ("S", 60)):
@@ -6384,11 +6502,43 @@ def demo():
         assert ns == want, f"portada, {ch}: {ns} escaños dibujados, {want} reales"
         assert na == want, f"portada, {ch}: {na} enlaces para {want} escaños"
     # and the links point at pages that exist
-    hrefs = re.findall(r'<a href="(parlamentario/[^"]+)"',
-                       home.split('id="hemi-S"')[1].split("</svg>")[0])
+    hrefs = re.findall(r'<a class="sl" href="(parlamentario/[^"]+)"',
+                       seat_block(home, "hemi-S"))
     assert len(set(hrefs)) == 60, f"{len(set(hrefs))} fichas distintas en 60 escaños"
     for h in hrefs[:10]:
         assert (OUT / h).exists(), f"escaño enlaza a {h}, que no existe"
+
+    # ---- la tarjeta del escaño. El pie que explicaba cómo leer el diagrama se
+    # borró porque la tarjeta dice lo mismo apuntando: si la tarjeta se queda
+    # sin nombre, sin cara o sin marca de bancada, la portada pierde el dato y
+    # no queda nada debajo que lo devuelva.
+    for ch, want in (("D", 130), ("S", 60)):
+        blk = seat_block(home, f"hemi-{ch}")
+        assert blk.count('<span class="pop">') == want, \
+            f'portada, {ch}: {blk.count(chr(60) + "span class=" + chr(34) + "pop")} '\
+            f"tarjetas para {want} escaños"
+        assert blk.count('class="popt"') == want, f"{ch}: tarjetas sin nombre"
+        # cara y marca de bancada, una por tarjeta: el retrato local o la
+        # baldosa de iniciales, y el logotipo o el monograma.
+        assert (blk.count('class="face shot"') + blk.count('class="noface face"')
+                == want), f"{ch}: tarjetas sin retrato ni baldosa"
+        assert blk.count('class="blogo') == want, f"{ch}: tarjetas sin bancada"
+        # y ninguna imagen se descarga hasta que se abre la tarjeta
+        assert blk.count('loading="lazy"') >= want, f"{ch}: imágenes sin lazy"
+        # un <title> por figura, el del diagrama. Un tooltip nativo por escaño
+        # se abriría encima de la tarjeta un segundo después.
+        assert blk.count("<title>") == 1, \
+            f"{ch}: {blk.count('<title>')} tooltips nativos compitiendo con la tarjeta"
+
+    # ---- el asunto de una votación es prosa. El tablero imprime las cabeceras
+    # de su tabla en vertical, una letra por línea, y `pdftotext` las devuelve
+    # en horizontal pegadas al final: «…APROBADA POR AMPLIA MAYORÍA V A T I A R
+    # M F O IN I A P C O». Es la portada la que enseñaba eso.
+    for vid, subj in con.execute("SELECT id, subject FROM vote "
+                                 "WHERE subject IS NOT NULL"):
+        assert not re.search(r"(?:\s+[A-ZÁÉÍÓÚÜÑ]{1,2}\b){4,}\s*$", subj), \
+            f"{vid}: el asunto acaba en la cabecera vertical del tablero: "\
+            f"…{subj[-44:]}"
 
     # A roll call draws one seat per row of the nominal list, coloured by the
     # vote and not by the bench, and every one of them is still a link.
@@ -6428,7 +6578,7 @@ def demo():
             assert len(sigs) == len(set(sigs)), \
                 f"{pg.name}: dos entradas de una leyenda con la misma figura"
         # the caption promises greyscale legibility: it has to say at what
-        # width. Only where the arc is coloured by the vote — the empty chamber
+        # width. Only where the arc is coloured by the vote. The empty chamber
         # drawn for a roll call with no nominal list promises nothing.
         if 'id="hemi-vote"' in t and 'id="quien"' in t:
             assert "8 px" in t and "ilustración" in t, \
@@ -6451,7 +6601,8 @@ def demo():
 
     # Every bar gets the treatment every other bar got: a rule on each internal
     # boundary and a title on each segment. The summary bar above the hemicycle
-    # — the most prominent graphic on the page — was the one that had neither.
+    # is the most prominent graphic on the page, and it was the one that had
+    # neither.
     for pg, t in vpages.items():
         for j, b in enumerate(re.findall(r'<div class="bar"[^>]*>(.*?)</div>',
                                          t, re.S)):
@@ -6528,7 +6679,7 @@ def demo():
             f'--accent {tok["accent"]}: {_cr(tok["accent"], tok["ground"]):.2f}:1 '
         # Los colores de estado son relleno de escaño (3:1 bastaría) PERO
         # también son texto de 13 px en `.chip`, `.vote` y `.stg`, así que el
-        # techo real es 4.5:1 — y sobre las DOS superficies, porque la misma
+        # techo real es 4.5:1, y sobre las DOS superficies, porque la misma
         # ficha los pinta sobre la página y dentro de una tarjeta. Éste es el
         # límite que hizo fracasar el intento anterior de una escalera más
         # ancha, y por eso se mide en lugar de afirmarse.
@@ -6591,7 +6742,7 @@ def demo():
     assert "mediana" in blk and "de 130 en" in blk, "falta la mediana o el rango"
     # Every axis has to be a thing we counted. The page says so out loud, and
     # each strip has to carry the denominator it was computed over.
-    assert "no publicamos un eje ideológico" in blk, \
+    assert "publicamos un eje ideológico" in blk, \
         "la ficha no dice por qué no hay eje ideológico"
     for fig in blk.split('<figure class="strip"')[1:]:
         assert "de 130 en" in fig or "de 60 en" in fig, \
@@ -6636,7 +6787,7 @@ def demo():
 
     # ---- cada listado largo lleva su dispositivo gráfico. Las 311 páginas de
     # listado eran 250 filas idénticas sin un solo svg, img, barra, riel ni
-    # monograma: el mismo fallo —«una tabla de 130 nombres no se puede leer»—
+    # monograma: el mismo fallo, «una tabla de 130 nombres no se puede leer»,
     # que este trabajo existe para arreglar, sobre la superficie más larga.
     assert len(lists) >= 100, f"solo {len(lists)} listados largos encontrados"
     for p, t, body in lists:
