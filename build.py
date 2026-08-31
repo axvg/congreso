@@ -757,7 +757,10 @@ nav.top .panel a:hover small{color:var(--muted)}
 .lede{font-size:17px;color:var(--ink);max-width:66ch;margin:14px 0 0}
 section{margin:34px 0}
 .card{background:var(--raised);border:1px solid var(--line);border-radius:2px;padding:18px 20px}
-.grid{display:grid;gap:14px}
+/* align-items:start: sin él la celda corta se estira a la altura de la larga
+   y la portada enseña media tarjeta de aire (19 nombres de la Cámara contra
+   12 mesas del Senado a tres líneas cada una). */
+.grid{display:grid;gap:14px;align-items:start}
 @media(min-width:760px){.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}}
 .chip{display:inline-block;font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;
   text-transform:uppercase;border:1px solid currentColor;border-radius:2px;padding:5px 7px;
@@ -6492,9 +6495,8 @@ las legislaturas.
     last = max((b["presented_on"] or "") for b in d["bills"]) if d["bills"] else today
     body = f"""<span class="eyebrow">Congreso de la República del Perú · 2026-2031</span>
 <h1>Qué está haciendo el Congreso ahora mismo</h1>
-<p class="lede">130 diputados y 60 senadores, cada proyecto de ley con la etapa
-en la que está y cada votación con quién votó qué. Último movimiento
-registrado: <b>{fecha(last)}</b>.</p>
+<p class="lede">Cada proyecto de ley con su etapa y cada votación con quién
+votó qué. Último movimiento registrado: <b>{fecha(last)}</b>.</p>
 
 <section><h2>Los 190 escaños, uno por uno</h2>
 <div class="halls">{"".join(halls)}</div>
