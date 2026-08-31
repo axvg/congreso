@@ -762,6 +762,7 @@ section{margin:34px 0}
    12 mesas del Senado a tres líneas cada una). */
 .grid{display:grid;gap:14px;align-items:start}
 @media(min-width:760px){.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .chip{display:inline-block;font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;
   text-transform:uppercase;border:1px solid currentColor;border-radius:2px;padding:5px 7px;
   white-space:nowrap;vertical-align:middle}
@@ -769,6 +770,8 @@ section{margin:34px 0}
 .chip.ok{color:var(--ok)} .chip.wait{color:var(--wait)} .chip.dead{color:var(--dead)}
 .chip.now{color:var(--accent)}
 .chip.si{color:var(--si)} .chip.no{color:var(--no)} .chip.abst{color:var(--abst)}
+/* la F de faltó va en rojo: es la única marca de la lista que acusa */
+.chip.falta{color:var(--no)}
 .gp1{color:var(--gp1)}.gp2{color:var(--gp2)}.gp3{color:var(--gp3)}
 .gp4{color:var(--gp4)}.gp5{color:var(--gp5)}.gp6{color:var(--gp6)}.gp0{color:var(--gp0)}
 .dotmark{display:inline-block;width:9px;height:9px;border-radius:50%;background:currentColor;
@@ -1350,6 +1353,39 @@ var h0=decodeURIComponent(location.hash.replace(/^#(q=)?/,""));
 if(h0){q.value=h0;flt();}
 </script>"""
 
+# Ordena en el DOM cualquier <table class="srt">: click en la cabecera ordena
+# por esa columna, otro click invierte. Una celda con data-s ordena por ese
+# valor (fechas en ISO); si ambas celdas parecen número (cifras con espacio
+# fino, % o S/) compara como número, y si no, como texto en español. El roster
+# de una votación tiene su propio orden con estado en la URL; esto es para las
+# tablas que eran estáticas.
+SORT_JS = """<script>
+[].forEach.call(document.querySelectorAll("table.srt"),function(t){
+ if(!t.tHead||!t.tBodies.length)return;
+ var th=t.tHead.rows[0].cells,cur=-1,dir=1;
+ [].forEach.call(th,function(h,i){
+  if(!h.textContent.trim())return;
+  var b=document.createElement("button");b.textContent=h.textContent;
+  h.textContent="";h.appendChild(b);
+  b.onclick=function(){
+   dir=(cur===i)?-dir:1;cur=i;
+   var tb=t.tBodies[0],rs=[].slice.call(tb.rows);
+   var NUM=/^-?[\\d\\s\\u202f.,]+\\s*(%|S\\/)?$/;
+   rs.sort(function(a,c){
+    var x=(a.cells[i].dataset.s||a.cells[i].textContent).trim(),
+        y=(c.cells[i].dataset.s||c.cells[i].textContent).trim(),r;
+    if(NUM.test(x)&&NUM.test(y))
+     r=parseFloat(x.replace(/[^0-9,.-]+/g,"").replace(",","."))
+      -parseFloat(y.replace(/[^0-9,.-]+/g,"").replace(",","."));
+    else r=x.localeCompare(y,"es");
+    return (r||0)*dir;});
+   rs.forEach(function(r){tb.appendChild(r);});
+   [].forEach.call(th,function(h2){h2.removeAttribute("aria-sort");});
+   h.setAttribute("aria-sort",dir>0?"ascending":"descending");
+  };});
+});
+</script>"""
+
 THEME = ("<script>(function(){var t=localStorage.getItem('tema');"
          "if(t)document.documentElement.setAttribute('data-theme',t);})()</script>")
 TOGGLE = ("<button onclick=\"var d=document.documentElement,"
@@ -1452,7 +1488,7 @@ def shell(title, body, depth=0, desc=""):
 <footer class="prov"><a href="{r}acerca.html">Acerca, fuentes y
 correcciones</a> &middot; Registro independiente con datos publicados por el
 Congreso del Perú. <b>Este sitio no es el Congreso.</b>{logo_footer(body, r)}
-</footer></div></html>"""
+</footer></div>{SORT_JS if 'class="srt"' in body else ""}</html>"""
 
 
 def gp(party):
@@ -2679,7 +2715,8 @@ def vote_feed_row(d, v, r=""):
         marks = '<span class="vb"><em>sin lista nominal</em></span>'
     tail = f'<span class="vbs">{marks}</span>' if marks else ""
     return (f'<li><span class="m">{esc(CHAMBER_SHORT[v["chamber"]])} · '
-            f'{fecha(v["held_on"])} · {esc(v["result"] or "")}</span>'
+            f'{fecha(v["held_on"])}'
+            f'{" · " + esc(v["result"]) if v["result"] else ""}</span>'
             f'<a class="t" href="{r}votacion/{v["slug"]}.html">'
             f'{esc(clip(v["subject"] or v["id"], 150))}</a>{tail}</li>')
 
@@ -2994,7 +3031,7 @@ def render_bill(d, b):
             _t, _c = tallies(v, d["vrows"].get(v["id"], []))
             y, nn, aa = _t[0][2] if _t else (0, 0, 0)
             vr.append(
-                f'<tr><td>{fecha(v["held_on"])}</td>'
+                f'<tr><td data-s="{esc(v["held_on"] or "")}">{fecha(v["held_on"])}</td>'
                 f'<td><a href="{vote_url(r, v)}">'
                 f'{esc(clip(v["subject"] or v["id"], 110))}</a></td>'
                 f'<td class="num">{y}</td><td class="num">{nn}</td>'
@@ -3002,7 +3039,7 @@ def render_bill(d, b):
                 f'<td>{esc(d["voutcome"][v["id"]])}</td></tr>')
         votes_html = (
             f'<section><h2>Votaciones nominales sobre este proyecto '
-            f'({len(votes)})</h2><div class="scroll"><table><thead><tr>'
+            f'({len(votes)})</h2><div class="scroll"><table class="srt"><thead><tr>'
             f'<th>Fecha</th><th>Asunto</th><th>A favor</th><th>En contra</th>'
             f'<th>Abst.</th><th>Resultado</th></tr></thead><tbody>'
             + "".join(vr) + '</tbody></table></div></section>')
@@ -3313,14 +3350,15 @@ def att_block(d, L, base, r="../"):
     for s, x in sorted(xs, key=lambda p: (p[0]["held_on"], p[0]["sort"]),
                        reverse=True):
         lab, kind, why = att_state(d, s, x)
-        tone = {"presente": "ok", "falta": "dead", "presidencia": "s"}.get(
+        tone = {"presente": "ok", "falta": "falta", "presidencia": "s"}.get(
             kind, "wait")
         rows.append(
-            f'<tr><td><a href="{r}asistencia/{esc(s["slug"])}.html">'
+            f'<tr><td data-s="{esc(s["held_on"])} {esc(hour24(s["taken_at"]))}">'
+            f'<a href="{r}asistencia/{esc(s["slug"])}.html">'
             f'{fecha(s["held_on"])}</a></td>'
             f'<td>{esc(s["taken_at"])}</td>'
-            f'<td><span class="chip {tone}">{esc(lab)}</span></td>'
-            f'<td class="sm mut">{esc(why)}</td></tr>')
+            f'<td data-s="{ATT_LETTER.get(kind, "·")}">{att_mark(lab, kind, tone)}</td>'
+            f'<td class="sm mut"><b>{esc(lab)}.</b> {esc(why)}</td></tr>')
     faltas = den - ok
     return f"""<section><h2>Asistencia al Pleno</h2>
 <dl class="tiles">
@@ -3332,7 +3370,7 @@ fuera del denominador</small></dd></div>
 {f'<div class="tile"><dt>Presidiendo</dt><dd>{pre}<small>dirigía la sesión: tampoco es falta</small></dd></div>' if pre else ""}
 </dl>
 <div style="margin-top:22px">{att_strip(d, L, r)}</div>
-<div class="scroll" style="margin-top:18px"><table><thead><tr><th>Sesión</th>
+<div class="scroll" style="margin-top:18px"><table class="srt"><thead><tr><th>Sesión</th>
 <th>Hora de la toma</th><th>Estado</th><th>Qué significa</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 <p class="sm mut">La unidad es la toma, no el día: cada sesión pasa lista varias
@@ -3471,14 +3509,14 @@ def render_leg(d, L, base):
             if key == "disputado":
                 caveat = True
             vrows.append(
-                f'<tr><td>{fecha(vv["held_on"])}</td>'
+                f'<tr><td data-s="{esc(vv["held_on"] or "")}">{fecha(vv["held_on"])}</td>'
                 f'<td><a href="{vote_url(r, vv)}">'
                 f'{esc(clip(vv["subject"] or vv["id"], 120))}</a>'
                 + (f' <span class="chip {tone}">{esc(lab)}</span>' if lab else "")
                 + f'</td><td>{esc(pos(p)[0])}'
                 + (' <b>(rompió con su bancada)</b>' if odd else "")
                 + f'</td><td>{esc(out)}</td></tr>')
-        vl = ('<section><h2>Votaciones</h2><div class="scroll"><table>'
+        vl = ('<section><h2>Votaciones</h2><div class="scroll"><table class="srt">'
               '<thead><tr><th>Fecha</th><th>Asunto</th><th>Su voto</th>'
               '<th>Resultado</th></tr></thead><tbody>' + "".join(vrows)
               + "</tbody></table></div>"
@@ -3737,11 +3775,25 @@ ATT = {
 }
 
 
+# La marca de una letra con la que las listas imprimen cada estado: A asistió,
+# F faltó (en rojo), L licencia, P presidió. Siempre con el nombre completo en
+# un title, en la celda de al lado o en el glosario: una letra suelta jamás
+# puede convertir una licencia en falta.
+ATT_LETTER = {"presente": "A", "falta": "F", "excusa": "L", "presidencia": "P"}
+
+
 def att(st):
     return ATT.get((st or "").upper(),
                    (st or "Sin dato", "excusa",
                     "Estado que la lista de asistencia publica y que todavía no "
                     "hemos traducido. No lo contamos como inasistencia."))
+
+
+def att_mark(lab, kind, tone):
+    """The one-letter chip. The full label always travels with it."""
+    return (f'<span class="chip {tone}" title="{esc(lab)}" aria-hidden="true">'
+            f'{ATT_LETTER.get(kind, "·")}</span>'
+            f'<span class="vh">{esc(lab)}</span>')
 
 
 def att_state(d, s, x):
@@ -4094,7 +4146,7 @@ Quiénes son, en <a href="{r}parlamentarios.html">el padrón</a>.</figcaption></
         # window; folded, it costs one 44 px row until somebody wants it.
         ptable = ('<details class="gloss" style="margin-top:16px"><summary>'
                   'Las cifras exactas, bancada por bancada</summary>'
-                  '<div class="scroll"><table><thead><tr><th>Grupo parlamentario</th>'
+                  '<div class="scroll"><table class="srt"><thead><tr><th>Grupo parlamentario</th>'
                   + "".join(f'<th>{esc(pos(h)[0])}</th>' for h in head)
                   + '<th>Total</th><th>% a favor</th>'
                   '<th title="En cuántas votaciones nominales de esta cámara la '
@@ -4657,15 +4709,19 @@ def att_series(d):
 
 
 def att_gloss(d, s):
-    seen = sorted({att_state(d, s, x)[0] for x in s["rows"]})
-    why = {}
+    info = {}
     for x in s["rows"]:
-        lab, _k, w = att_state(d, s, x)
-        why[lab] = w
-    return ('<details class="gloss"><summary>Qué significa cada estado de '
+        lab, k, w = att_state(d, s, x)
+        tone = {"presente": "ok", "falta": "falta",
+                "presidencia": "s"}.get(k, "wait")
+        info[lab] = (ATT_LETTER.get(k, "·"), tone, w)
+    return ('<details class="gloss" open><summary>Qué significa cada letra de '
             'la lista</summary><dl class="kv">' + "".join(
-                f'<div><dt>{esc(lab)}</dt><dd>{esc(why[lab])}</dd></div>'
-                for lab in seen) + "</dl></details>")
+                f'<div><dt><span class="chip {t}">{m}</span> {esc(lab)}</dt>'
+                f'<dd>{esc(w)}</dd></div>'
+                for lab, (m, t, w) in sorted(info.items(),
+                                             key=lambda i: i[1][0]))
+            + "</dl></details>")
 
 
 def render_att(d, s):
@@ -4678,11 +4734,12 @@ def render_att(d, s):
     rows, faltaron = [], []
     for x in sorted(s["rows"], key=lambda x: ((x["party_raw"] or ""), x["name_raw"])):
         lab, kind, _why = att_state(d, s, x)
-        tone = {"presente": "ok", "falta": "dead", "presidencia": "s"}.get(kind, "wait")
+        tone = {"presente": "ok", "falta": "falta", "presidencia": "s"}.get(kind, "wait")
         L = x["leg"]
         who = (f'<a href="{leg_url(r, L["slug"])}">{esc(nice_name(L["full_name"]))}</a>'
                if L else esc(nice_name(x["name_raw"])))
-        rows.append(f'<tr><td><span class="chip {tone}">{esc(lab)}</span></td>'
+        rows.append(f'<tr><td data-s="{ATT_LETTER.get(kind, "·")}">'
+                    f'{att_mark(lab, kind, tone)}</td>'
                     f'<td>{who}</td><td>{esc(x["party_raw"] or "—")}</td></tr>')
         if kind == "falta":
             faltaron.append(who)
@@ -4705,7 +4762,7 @@ inasistencia.</p>
 {att_gloss(d, s)}
 <div class="filters"><input id="q" type="search"
  placeholder="Busca a tu parlamentario o su bancada" aria-label="Filtrar la lista"></div>
-<div class="scroll"><table><thead><tr><th>Estado</th><th>Parlamentario</th>
+<div class="scroll"><table class="srt"><thead><tr><th>Estado</th><th>Parlamentario</th>
 <th>Grupo parlamentario</th></tr></thead><tbody id="ls">{"".join(rows)}</tbody>
 </table></div><p class="sm mut" id="cnt">{t["total"]} nombres, en el orden
 oficial.</p>
@@ -4729,7 +4786,8 @@ def render_att_index(d, today):
         t = s["tally"]
         p, usable = pct_or_note(t["presente"], t["base"], "asistentes")
         trows.append(
-            f'<tr><td class="nw"><a href="asistencia/{esc(s["slug"])}.html">'
+            f'<tr><td class="nw" data-s="{esc(s["held_on"])} {esc(hour24(s["taken_at"]))}">'
+            f'<a href="asistencia/{esc(s["slug"])}.html">'
             f'{fecha(s["held_on"])}</a></td><td>{esc(s["taken_at"])}</td>'
             f'<td><span class="chip {s["chamber"].lower()}">'
             f'{esc(CHAMBER_SHORT[s["chamber"]])}</span></td>'
@@ -4781,12 +4839,12 @@ ponga marca. Ninguna de las dos entra en el denominador de esta página.</div>
 <section><h2>Resumen por cámara</h2><dl class="tiles">{"".join(per_ch)}</dl></section>
 <section><h2>Cuánta gente hubo en cada toma</h2>{att_series(d)}</section>
 <section><h2>Sesión por sesión</h2>
-<div class="scroll"><table><thead><tr><th>Sesión</th><th>Hora</th><th>Cámara</th>
+<div class="scroll"><table class="srt"><thead><tr><th>Sesión</th><th>Hora</th><th>Cámara</th>
 <th>Presentes</th><th>Ausentes</th><th>Licencias</th>
 <th>% de quienes debían estar</th>
 </tr></thead><tbody>{"".join(trows)}</tbody></table></div></section>
 {f'''<section><h2>Quiénes acumulan más inasistencias</h2>
-<div class="scroll"><table><thead><tr><th>Parlamentario</th><th>Cámara</th>
+<div class="scroll"><table class="srt"><thead><tr><th>Parlamentario</th><th>Cámara</th>
 <th>Grupo</th><th>Inasistencias</th><th>Tomas que le correspondían</th>
 <th>Licencias</th></tr></thead><tbody>{rrows}</tbody></table></div>
 <p class="sm mut">Conteos, no porcentajes. Sobre {len(d["sesiones"])} tomas un
@@ -6751,8 +6809,12 @@ def demo():
         # once more in each cell's title, and double-counting it would make this
         # check fire on a page that is right.
         tb = blk.split("<tbody>")[1].split("</tbody>")[0]
-        assert tb.count("Ausente") == den - ok, \
-            f'{L["slug"]}: {tb.count("Ausente")} ausencias en la tabla, {den - ok} reales'
+        # One per row: the bold label leading the "qué significa" cell. The
+        # letter chip repeats the state in its title and hidden text, so a bare
+        # substring count would triple-count every absence.
+        assert tb.count("<b>Ausente.</b>") == den - ok, \
+            f'{L["slug"]}: {tb.count("<b>Ausente.</b>")} ausencias en la ' \
+            f'tabla, {den - ok} reales'
         if den < 5:
             assert "muy pocas" in blk, f'{L["slug"]}: bare rate over {den} takings'
     for s in d2["sesiones"]:
