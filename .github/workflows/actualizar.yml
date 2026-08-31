@@ -18,6 +18,8 @@ jobs:
   actualizar:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: write          # sube la base actualizada al release
     # a nivel de job para poder preguntar por él en el `if` del despliegue
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -36,13 +38,18 @@ jobs:
         run: pip install --quiet cryptography
 
       # La base es derivada: se puede reconstruir entera desde las APIs, pero eso
-      # son horas. Se cachea para que la corrida diaria solo traiga lo nuevo.
+      # son horas. Vive como asset del release `base-de-datos`: se baja al
+      # empezar y se reemplaza al terminar. No es actions/cache porque la caché
+      # solo se guarda cuando el job termina, y un job que necesita la caché
+      # para terminar en 120 minutos jamás llegó a sembrarla: 26 corridas
+      # canceladas seguidas. El release persiste y no expira.
       - name: Restaurar base
-        uses: actions/cache@v4
-        with:
-          path: data/congreso.db
-          key: congreso-db-${{ github.run_id }}
-          restore-keys: congreso-db-
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download base-de-datos --repo "$GITHUB_REPOSITORY" \
+            --pattern congreso.db.zst --output - | zstd -d -f -o data/congreso.db
+          ls -lh data/congreso.db
 
       - name: Ingerir
         run: |
@@ -89,6 +96,16 @@ jobs:
       - name: Desplegar a Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != ''
         run: npx --yes wrangler@4 pages deploy site --project-name=hemiciclo --branch=main
+
+      # Solo tras construir y desplegar sin error: una ingesta rota no debe
+      # convertirse en la semilla de mañana.
+      - name: Guardar base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zstd -9 -T0 -f data/congreso.db -o congreso.db.zst
+          gh release upload base-de-datos congreso.db.zst \
+            --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Resumen
         run: python3 -m ingest.run status >> "$GITHUB_STEP_SUMMARY"
