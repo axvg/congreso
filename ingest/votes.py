@@ -623,7 +623,15 @@ def ingest(con, chamber=None, offline=False):
             if m.get("mime_type") != "application/pdf":
                 continue
             url = m["source_url"]
-            if not NAME_RE.search(urllib.parse.unquote(url.rsplit("/", 1)[-1])):
+            fname = urllib.parse.unquote(url.rsplit("/", 1)[-1])
+            if not NAME_RE.search(fname):
+                continue
+            # The Senado's site carries a stray copy of the Diputados board
+            # (different bytes, so the sha dedup never sees it). A board named
+            # for the other chamber is not this chamber's record: ingesting it
+            # here filed 130 deputies as a Senate roll call with zero joins.
+            if {"D": "SENADO", "S": "DIPUTADOS"}[ch] in fname.upper():
+                print(f"  {fname}: board of the other chamber, skipped", flush=True)
                 continue
             p = cached(url, offline)
             sha = hashlib.sha256(p.read_bytes()).hexdigest()

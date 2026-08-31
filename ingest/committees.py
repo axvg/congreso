@@ -262,10 +262,21 @@ def page(chamber, slug):
     return d[0]["link"], d[0]["content"]["rendered"]
 
 
+# The chamber page is typed by hand and drifts from the API's spelling; each
+# known erratum maps to the API's key. A new mismatch still raises in
+# nomina_diputados, which is where it should be caught, not papered over.
+CTTE_ALIAS = {
+    # page: "Innovación, Tecnológia" — API: "Innovación Tecnológica"
+    "ciencia, innovacion, tecnologia y sociedad digital":
+        "ciencia, innovacion tecnologica y sociedad digital",
+}
+
+
 def ctte_key(name):
     """Committee names are quoted with and without their prefix, everywhere."""
-    return norm(re.sub(r"^comisi[oó]n\s+(de\s+|en\s+asuntos\s+de\s+|en\s+)?", "",
-                       name.replace("(Art. 48)", ""), flags=re.I))
+    k = norm(re.sub(r"^comisi[oó]n\s+(de\s+|en\s+asuntos\s+de\s+|en\s+)?", "",
+                    name.replace("(Art. 48)", ""), flags=re.I))
+    return CTTE_ALIAS.get(k, k)
 
 
 def nomina_diputados(per_par=2026):
@@ -422,6 +433,22 @@ def ingest_mesas(con, chamber="S"):
             hits = {v for k, v in cand.items() if k in key or key in k}
             near = difflib.get_close_matches(key, cand, n=1, cutoff=0.8)
             cid = hits.pop() if len(hits) == 1 else (cand[near[0]] if near else None)
+        if cid is None and "bicameral" in key:
+            # The Senado now publishes mesas for bicameral committees, which no
+            # cuadro seats. Resolve the id against the bills API and let the
+            # officers land as amendment=1 -- the flag for a seat outside an
+            # approved cuadro -- instead of pretending the page said nothing.
+            apic = {ctte_key(c["nombreComision"]): c
+                    for c in api.spley("/comisiones")
+                    if "bicameral" in ctte_key(c["nombreComision"])}
+            near = difflib.get_close_matches(key, apic, n=1, cutoff=0.8)
+            if near:
+                c = apic[near[0]]
+                db.upsert(con, "committee", {
+                    "id": c["comisionId"], "per_par": 2026, "chamber": "C",
+                    "name": c["nombreComision"],
+                    "slug": slugify(c["nombreComision"])})
+                cid = c["comisionId"]
         if cid is None:
             raise RuntimeError(f"mesa sin comisión: «{name}»")
         nc += 1

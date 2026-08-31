@@ -1693,6 +1693,9 @@ POS_SHAPE = {
     "SI": ("circle", 0), "NO": ("diamond", 0), "ABST": ("triangle", 0),
     "BLANCO": ("square", 0), "AUSENTE": ("ring", 1), "LICENCIA": ("square", 1),
     "PRESIDENCIA": ("triangle", 1), "OTRO": ("diamond", 1),
+    # Distinct from the ("ring", 1) fallback: a legend that draws two states
+    # with one silhouette trips the greyscale check, and should.
+    "SINRES": ("hex", 1),
 }
 
 
@@ -3672,6 +3675,10 @@ POS = {
                     "que ejerce la presidencia»: no es una ausencia."),
     "OTRO": ("Sin voto registrado", "excusa", 7,
              "El acta no le asigna ningún sentido de voto y no dice por qué."),
+    "SINRES": ("Sin respuesta", "excusa", 8,
+               "El tablero lo publica como «Sin Res.»: registrado en la sesión "
+               "sin marcar ningún sentido de voto. No lo contamos como "
+               "inasistencia."),
 }
 
 
@@ -6565,7 +6572,9 @@ def demo():
         leg = con.execute("SELECT slug FROM legislator").fetchall()
         slugs = {r["slug"] for r in leg}
         assert any(f"{s}.html" in t for s in slugs), "no sponsor linked on bill page"
-    L = dict(con.execute("SELECT * FROM legislator LIMIT 1").fetchone())
+    # A sitting member: the 2021 rows carry no party, by design.
+    L = dict(con.execute("SELECT * FROM legislator WHERE chamber IN ('D','S') "
+                         "LIMIT 1").fetchone())
     lp = OUT / "parlamentario" / f'{L["slug"]}.html'
     assert L["party"] in lp.read_text(), "party missing on legislator page"
     for f in ("index.html", "proyectos.html", "parlamentarios.html",
