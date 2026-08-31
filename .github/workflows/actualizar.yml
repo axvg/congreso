@@ -95,7 +95,7 @@ jobs:
 
       - name: Desplegar a Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != ''
-        run: npx --yes wrangler@4 pages deploy site --project-name=hemiciclo --branch=main
+        run: npx --yes wrangler@4 pages deploy site --project-name=congreso-pe --branch=main
 
       # Solo tras construir y desplegar sin error: una ingesta rota no debe
       # convertirse en la semilla de mañana.
