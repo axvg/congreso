@@ -219,9 +219,16 @@ def ingest(con, chamber, pdf):
         for raw, bench, role, amend in members:
             lid = match(raw, people)
             unmatched += lid is None
+            # El diario no sabe nada de mesas: reemplazar la fila no puede
+            # borrar el cargo que ingest_mesas le selló. Correr los módulos en
+            # el otro orden dejaba 5 sellos de 36 y el autochequeo lo cazó.
+            old = con.execute(
+                "SELECT mesa FROM committee_member WHERE committee_id=? "
+                "AND name_raw=? AND role=?", (cid, raw, role)).fetchone()
             db.upsert(con, "committee_member", {
                 "committee_id": cid, "legislator_id": lid, "name_raw": raw,
                 "bench": bench, "role": role, "amendment": amend,
+                "mesa": old["mesa"] if old else None,
                 "source_url": str(pdf)})
             nm += 1
     con.commit()
