@@ -66,20 +66,21 @@ jobs:
           python3 -m ingest.run gastos "$(date -u +%Y)"
           python3 -m ingest.run status
 
+      # Solo el diario en que el parser está validado: la sesión del cuadro del
+      # Senado. Soltarlo sobre todos los PLO-*.pdf leyó cabeceras y apellidos de
+      # los diarios de Diputados como comisiones («navarro», 36 miembros;
+      # «senado-de-la-republica», 37) y resucitó las cinco fantasma de oficio.
+      # Los cuadros de la Cámara son trabajo aparte, con su parser y sus checks.
       - name: Comisiones desde el Diario
         run: |
           python3 - <<'PY'
           from pathlib import Path
           from ingest import db, committees
           con = db.connect()
-          for pdf in sorted((db.ROOT / "data" / "pdf").glob("PLO-*.pdf")):
-              ch = "S" if "SENADO" in pdf.name.upper() else "D"
-              try:
-                  nc, nm, un = committees.ingest(con, ch, pdf)
-                  if nm:
-                      print(f"{pdf.name}: {nc} comisiones, {nm} asignaciones, {un} sin enlazar")
-              except Exception as e:
-                  print(f"{pdf.name}: {e!r}")
+          pdf = db.ROOT / "data" / "pdf" / "PLO-2026-3-SENADO.pdf"
+          if pdf.exists():
+              nc, nm, un = committees.ingest(con, "S", pdf)
+              print(f"{pdf.name}: {nc} comisiones, {nm} asignaciones, {un} sin enlazar")
           PY
 
       - name: Autochequeos

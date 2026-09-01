@@ -2178,6 +2178,16 @@ def load(con):
     # they said before.
     d["cttes"] = {r["id"]: dict(r) for r in con.execute(
         "SELECT * FROM committee ORDER BY name")}
+    # Six committee names repeat between the 2021 Congress and a 2026 chamber
+    # ("Justicia y Derechos Humanos" exists in both), and a shared slug is one
+    # page file: the last writer silently overwrote the other's page. The 2021
+    # acervo keeps the bare slug its links have had since launch; a 2026 row
+    # that collides gets its chamber appended.
+    taken = {}
+    for c in sorted(d["cttes"].values(), key=lambda c: (c["per_par"] or 0)):
+        if c["slug"] in taken and taken[c["slug"]] != c["id"]:
+            c["slug"] = f'{c["slug"]}-{SEG[c["chamber"] or "C"]}'
+        taken.setdefault(c["slug"], c["id"])
     d["alias"], d["alias_name"] = ctte_aliases(con, d["cttes"])
     d["bill_cttes"], d["ctte_bills"] = {}, {}
     for r in con.execute("SELECT * FROM bill_committee"):
@@ -3571,7 +3581,8 @@ def render_leg(d, L, base):
                f'sustituyen a otra persona, no se suman a las de arriba.</p>'
                f'<ul class="roll">{"".join(ct_li(m, mark=True) for m in chg)}</ul>'
                if chg else "")
-            + '<p class="sm mut">Fuente: Diario de los Debates del Senado; ninguna '
+            + f'<p class="sm mut">Fuente: Diario de los Debates '
+              f'{esc(DE[L["chamber"]])}; ninguna '
               'cámara lo publica como dato.</p></section>')
     elif L["chamber"] == "D":
         ct_html = ('<section><h2>Comisiones</h2><p>La Cámara de Diputados no ha '
@@ -6718,10 +6729,13 @@ def demo():
     # Every ordinary committee of this Senate seats exactly twelve titulares. A
     # page showing anything else means a join went wrong -- or that an oficio
     # amendment was counted as a thirteenth member, which it never is.
+    # Per committee id and Senate only: grouping by bare slug summed a 2026
+    # chamber with its 2021 homonym and the twelve vanished from the count.
     ord12 = con.execute(
         "SELECT c.slug, count(*) n FROM committee_member m "
         "JOIN committee c ON c.id=m.committee_id "
-        "WHERE m.role='titular' AND m.amendment=0 GROUP BY 1 HAVING n=12").fetchall()
+        "WHERE m.role='titular' AND m.amendment=0 AND c.chamber='S' "
+        "GROUP BY c.id HAVING n=12").fetchall()
     assert len(ord12) >= 8, f"only {len(ord12)} committees with 12 titulares"
     for c in ord12:
         t = (OUT / "comision" / f'{c["slug"]}.html').read_text()
@@ -6750,8 +6764,11 @@ def demo():
     dip = con.execute("SELECT slug FROM legislator WHERE chamber='D' LIMIT 1").fetchone()
     t = (OUT / "parlamentario" / f'{dip["slug"]}.html').read_text()
     blk = t.split("<h2>Comisiones")[1].split("</section>")[0]
-    assert "Cámara de Diputados no ha publicado" in blk, "deputy left without a reason"
-    assert "<ul" not in blk and "../comision/" not in blk, "empty committee card"
+    # Since the 2026-3 diario the Cámara HAS minuted cuadros: a deputy page
+    # must list committees, or say why there are none. Either, never neither.
+    assert "../comision/" in blk or "Cámara de Diputados no ha publicado" in blk, \
+        "deputy page neither lists committees nor says why there are none"
+    assert "<ul" not in blk or "../comision/" in blk, "empty committee card"
     for p in (OUT / "comision").glob("*.html"):
         t = p.read_text()
         assert '<ul class="feed" id="ls"></ul>' not in t, f"{p.name}: empty bill list"
