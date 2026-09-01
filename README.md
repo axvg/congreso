@@ -1,5 +1,8 @@
 # Hemiciclo
 
+**Live at https://congreso-pe.pages.dev** — rebuilt and redeployed daily at
+06:00 Lima by `.github/workflows/actualizar.yml`.
+
 A public record of Peru's bicameral Congress — the 130 deputies and 60 senators
 of the 2026–2031 period. Bills, motions, roll-call votes and attendance, scraped
 from the Congress's own APIs and PDFs and rendered as a static site.
